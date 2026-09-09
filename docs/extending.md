@@ -6,11 +6,11 @@
 
 例如校园业务的 `topic` / `note` / `resource`，可以换成决策业务的 `problem` / `decision` / `evidence`。界面菜单、表单必填项、关系选择和标签根据 ontology 生成，不硬编码业务类型。节点的第一种类型在图里使用较大的圆点，这只是参考界面的视觉约定。
 
-运行 `npm run validate -- your-graph.json` 验证，再设置 `GRAPH_FILE` 构建或启动。使用相同社区 ID、revision 和数据路径会复用浏览器草稿；开发独立社区请换 ID。
+默认用户内容位于 `content/graph.json`。运行 `npm run validate -- your-graph.json` 验证，再修改 `community.config.json` 的 `graphFile` 和品牌文案；Pages 与 Docker 共用配置。临时预览可用 `GRAPH_FILE` 覆盖。使用相同社区 ID、revision 和数据路径会复用浏览器草稿；开发独立社区请换 ID。
 
 ## 复用核心而不用参考界面
 
-纯函数入口是 `packages/core/index.js`：
+独立依赖为 `@information-community/core`。在本仓库执行 `npm run package:core`，将生成的 `.tgz` 复制进使用方仓库并安装，然后从包名导入。包附带 TypeScript 类型，没有运行时依赖，无需本仓库的服务器、界面或数据库。目前未发布 npm registry，详见 [包文档](../packages/core/README.md)。
 
 - `validateOntology` / `validateGraph`：校验类型蓝图与完整图。
 - `makeChange` / `applyChange`：构造和原子应用带版本约束的提案。
@@ -28,7 +28,7 @@
 4. 在业务服务器接收 Change 后，先做身份、授权、证据与发布策略检查，再保存 canonical 数据并重新生成公开图。
 5. 当前图的边绑定稳定节点 ID，不绑定具体内容修订。需要固定版本引用的产品应先扩展协议，不得把本原型当成既有修订模型的直接替代。
 
-这个仓库没有自动迁移或修改 QandA / 校园指南的数据。它先证明共用核心的可行性，真实接入应通过明确映射和回归检查完成。
+已在 `xjtlu-unofficial-guide` 的 `/answers/[slug]` 真实页面接入“同主题其他答案”：以原业务层筛选出的公开候选构建有限的只读图，用两跳邻域查找关联答案，并继续渲染原卡片。没有迁移或替换原数据库、证据与审核流程。映射和验证细节见 [校园集成](integrations/xjtlu-unofficial-guide.md)。
 
 ## 数据与协议演进
 

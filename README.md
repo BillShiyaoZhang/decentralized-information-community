@@ -1,120 +1,99 @@
 # 共知 · Information Community
 
-把社区的话题、经验和资料连接成可检索的知识网络。核心不依赖框架、数据库或托管商；同一份数据既能部署成 GitHub Pages 静态站，也能在私有服务器上持续写入和计算。
+一个可自托管的社区知识网络工具：把话题、经验和资料连接起来，让小型社区能检索、补充和维护自己的知识。
 
-这是对 [最初想法](docs/intent.md) 的首个可运行实现。设计判断、取舍和后续边界见 [方案评估](docs/assessment.md)。校园数据均为演示，不代表学校现行规定。
+**一个仓库，两条上手路径。** 先复制模板获得 GitHub Pages 网站，需要共享写入时再运行同仓库的服务器；已有应用可以单独安装 `@information-community/core`。
 
-## 先看效果
+校园内容目前保留为演示，不代表学校现行规定。真实校园指南继续在 `xjtlu-unofficial-guide` 中维护，已有一个[真实页面接入示例](docs/integrations/xjtlu-unofficial-guide.md)。[原始想法](docs/intent.md)与[设计评估](docs/assessment.md)说明项目的出发点。
 
-需要 Docker Desktop 或 Docker Engine + Compose。
+## 第一阶段：复制模板，发布自己的网页
 
-```sh
-docker compose up -d dev
-```
+1. 在 GitHub 点 **Use this template → Create a new repository**。若源仓库还未启用模板，可先 Fork；维护者启用方法见[部署文档](docs/deployment.md)。
+2. 新仓库的 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。
+3. 在 **Actions → Publish GitHub Pages → Run workflow** 选择默认分支运行，完成后工作流会显示网站地址。
+4. 编辑 `community.config.json` 的品牌文案、`content/graph.json` 的社区名称、蓝图和内容。之后每次合并到默认分支都会测试、构建并自动更新 Pages。
 
-打开 <http://localhost:4173>，尝试：
+无需服务器、数据库或自建访问令牌。GitHub 要求新仓库首次启用 Pages，因此首次使用仍有上面的设置步骤。
 
-1. 搜索“新生”，在卡片与关系图之间切换。
-2. 点击“贡献内容”，创建话题或经验，然后在详情中用 `+` 建立有理由的关联。
-3. 在“类型与关系蓝图”中查看当前领域约束。
-4. 在“数据与提案”中导出本机修改或完整快照。
+默认页支持搜索、内容卡片、关系图、贡献表单和提案导出。**静态模式下，贡献保存在当前浏览器，公开更新由维护者审核提案并合并进 Git。** 它不提供自动多人同步。
 
-修改 `web/`、`packages/` 或 `examples/` 后会重新构建；刷新页面看结果。修改服务器源码或开发脚本后可 `docker compose restart dev`。
+## 第二阶段：在自己的服务器运行
 
-只有 Node.js 也可运行（要求 Node 24.12.x 或更新的 24.x）：
+也可以直接从这一阶段开始。安装 Docker Engine / Docker Desktop 和 Compose，在仓库目录运行：
 
 ```sh
-npm run dev
-```
-
-没有第三方运行时依赖，也不需要 `npm install`。代码使用原生 ES modules，Node 内置测试、HTTP 和 SQLite；本版本 Node 的 SQLite API 仍属实验性，生产升级前应复验。
-
-## 两种运行方式
-
-| 能力 | 静态站点 | 私有服务器 |
-| --- | --- | --- |
-| 检索、内容详情、关系图、蓝图校验 | 支持 | 支持，共用同一核心 |
-| 保存贡献 | 当前浏览器的本机草稿 | SQLite 事务写入 |
-| 共享更新 | 导出提案 → PR 审核 → 构建发布 | 携带写入令牌的 API |
-| 历史 | Git 提交记录 | 不可变快照与提案日志 |
-| 服务端计算 | 无 | 检索、邻域与连接统计接口，可扩展 |
-| 数据迁移 | 下载 JSON 快照 | 从 SQLite 导出相同格式快照 |
-
-**静态模式没有自动多人同步。** 浏览器草稿、未经审核的下载快照都不等于已发布社区数据。服务器默认公开读取、禁止写入；配置令牌后，持令牌者拥有整个社区的写权限。这不是完善的用户账号与审核系统。
-
-启动私有服务器：
-
-```sh
-# 在当前环境设置 WRITE_TOKEN，使用足够长的随机值，不要提交到 Git。
 docker compose --profile server up -d --build server
 ```
 
-打开 <http://localhost:4174>。未设置 `WRITE_TOKEN` 时服务器只读。设好令牌后在页面“设置写入令牌”中输入；令牌只保留在当前页面内存。数据库保存在 `community-data` Docker volume，重新创建容器不会丢失。外网部署应使用 HTTPS 和适当的访问控制。
+打开 <http://localhost:4174>。构建和服务器使用同一份 `community.config.json` 与 `content/graph.json`，首次启动自动导入，SQLite 保存在 `community-data` volume 中。已有数据库不会被种子文件覆盖。
 
-详细操作见 [部署与迁移](docs/deployment.md)。
+复制 `.env.example` 为 `.env`，为 `WRITE_TOKEN` 设置随机值，再重新创建服务器即可允许编辑者写入。页面中的“设置写入令牌”只将令牌保留在当前页面内存。`.env` 不要提交到 Git。
 
-## 用于自己的项目
+| 能力 | GitHub Pages | 私有服务器 |
+| --- | --- | --- |
+| 搜索、关系图、蓝图校验 | 支持 | 支持，共用核心 |
+| 保存贡献 | 本机草稿，导出提案 | 带写入令牌的 API，SQLite 事务 |
+| 发布流程 | 人工审核 → PR → 自动部署 | 持令牌者直接更新共享数据 |
+| 历史记录 | Git 提交 | 不可变快照与提案日志 |
+| 迁移 | 已审核 JSON 可作为服务器初始数据 | 导出同格式 JSON，构建静态镜像 |
 
-替换 JSON 中的 `ontology` 和内容，不需要修改核心。例如同样的页面可以显示“问题 / 决策 / 依据”：
+服务器默认公开读取、禁止写入；配置令牌后持有者具有全社区写权限。实际账号、细粒度授权和审核流程由接入的业务系统负责。外网部署、显式导入和导出操作见[部署与迁移](docs/deployment.md)。
+
+## 已有应用：独立使用核心包
+
+核心包没有运行时依赖，包含 ESM 入口和 TypeScript 类型，支持现代浏览器与 Node ≥22.13。根应用的 SQLite 服务器使用 Node 24.12 或更新的 24.x。
+
+目前通过仓库打包产物分发，尚未发布到 npm registry：
 
 ```sh
-# POSIX shell
-GRAPH_FILE=examples/decisions/graph.json npm run dev
+# 在本仓库（Node 24.12+ 的 24.x）
+npm ci
+npm run package:core
+# 将 artifacts/information-community-core-0.2.0.tgz 复制进使用方项目，再执行
+npm install ./vendor/information-community-core-0.2.0.tgz
 ```
-
-```powershell
-# PowerShell
-$env:GRAPH_FILE = 'examples/decisions/graph.json'
-npm run dev
-```
-
-从校园演示切到决策库前先停止占用同一端口的进程。Docker 可执行：
-
-```sh
-docker compose stop dev
-docker compose run --rm --service-ports -e GRAPH_FILE=examples/decisions/graph.json dev
-```
-
-核心也可以直接导入自己的应用：
 
 ```js
-import { validateGraph, searchGraph, makeChange, applyChange } from './packages/core/index.js';
+import { validateGraph, searchGraph, neighborhood } from '@information-community/core';
 
 validateGraph(graph);
-const matches = searchGraph(graph, { query: '新生', type: 'topic' });
-const proposal = makeChange(graph, [{ op: 'putNode', value: myNode }]);
-const next = applyChange(graph, proposal); // 校验失败或版本过期时，不修改原图
+const matches = searchGraph(graph, { query: '新生' });
+const related = matches.length ? neighborhood(graph, matches[0].id, 2) : null;
 ```
 
-请参考 [架构与数据契约](docs/architecture.md)、[接入新业务](docs/extending.md)、[投稿与审核](CONTRIBUTING.md)。
+`xjtlu-unofficial-guide` 的答案详情页已采用这条路线：从公开答案投影 `答案 → 主题 ← 答案`，展示“同主题其他答案”，复用原有卡片的证据与复核提示。[包 API](packages/core/README.md)、[接入说明](docs/extending.md)、[校园集成](docs/integrations/xjtlu-unofficial-guide.md)。
 
-## 验证
+## 本地开发与验证
 
 ```sh
-docker compose exec -T dev npm test
-docker compose exec -T dev npm run validate
-docker compose exec -T dev npm run build
+npm ci
+npm run dev
+# http://localhost:4173
+npm test
+npm run validate
+npm run build
+npm run package:core
 ```
 
-测试覆盖类型约束、无效来源、关系完整性、中文搜索、跨标签页冲突、草稿恢复、SQLite 历史、API 权限与版本冲突、CLI 并发合并、快照迁移，以及 GitHub Pages 仓库子路径。测试使用临时数据库，不触及实际社区数据。
+只看页面也可以 `docker compose up -d dev`。开发服务器会检测配置、内容、页面与核心变动，重新构建后刷新浏览器。运行测试前需要安装开发依赖；运行时本身不依赖第三方库。没有本机 Node 时，先 `docker compose run --rm dev npm ci`，再 `docker compose exec -T dev npm test`。
 
-GitHub Actions 自动运行检查。Pages 发布通过手动工作流启用，见部署文档。
+测试涵盖版本冲突、草稿恢复、API 权限、SQLite 历史、CLI 并发、静态仓库子路径、配置与数据往返迁移，以及将打包产物安装到仓库外的真实消费测试。CI 另在 Node 22.13 验证核心。
 
-## 项目结构
+## 仓库结构与维护
 
 ```text
-packages/core/       纯函数领域核心：蓝图、图验证、提案、搜索与图计算
-packages/adapters/   静态草稿 / HTTP 存储适配器
-server/             Node HTTP API + SQLite 不可变快照
-web/                不依赖框架的参考界面
-examples/           校园指南 / 项目决策库
-scripts/            构建、开发预览、验证、合并提案、导出快照
-tests/              核心、API、CLI 和静态部署验证
-docs/               评估、架构、接入与部署说明
+community.config.json  社区入口、品牌与页面文案
+content/               用户自己的已审核社区快照
+packages/core/         可独立分发的核心包与类型
+packages/adapters/     静态草稿 / HTTP 适配器（参考应用内部）
+web/                   无框架的参考界面
+server/                Node HTTP API + SQLite
+examples/              校园 / 决策库示例与测试夹具
+scripts/               构建、校验、提案合并、导入、导出、打包
 ```
 
-## 当前边界
+日常内容放在 `content/`，站点设置放在 `community.config.json`，升级引擎时保留这两处。模板生成的仓库是独立项目，不会自动接收上游更新；需要 GitHub 的上游同步功能可选择 Fork。核心包则通过版本号、打包产物和使用方 lockfile 升级。贡献代码和内容见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-这是一份可扩展基础，不是联邦协议：没有 P2P 自动同步、账户系统、细粒度权限、审核队列、全文搜索服务或 OWL 推理；首版也没有删除／撤回协议。全图版本冲突采用保守拒绝策略，不自动猜测如何合并。大数据量应接入索引和专门的图布局；当前上限为 10000 节点 / 40000 关系，推荐用小型社区先验证模式。
+目前没有 P2P / 联邦同步、删除撤回协议、账户系统、审核队列或 OWL 推理。全图版本冲突保守拒绝。上限为 10000 节点 / 40000 关系，适合先验证小型社区。[架构与数据契约](docs/architecture.md)描述具体边界。
 
 许可证：[MIT](LICENSE)。

@@ -15,7 +15,7 @@ async function body(req) {
   for await (const chunk of req) { size += chunk.length; if (size > 2 * 1024 * 1024) throw new GraphError('提案超过 2 MB'); chunks.push(chunk); }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new GraphError('无效 JSON'); }
 }
-export function createApp({ root, store = null, writeToken = '', api = !!store }) {
+export function createApp({ root, store = null, writeToken = '', api = !!store, site = {} }) {
   const directory = resolve(root);
   return createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -23,7 +23,9 @@ export function createApp({ root, store = null, writeToken = '', api = !!store }
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'");
     try {
       const url = new URL(req.url, 'http://localhost');
-      if (url.pathname === '/runtime-config.json' && req.method === 'GET') return send(res, 200, { mode: api ? 'server' : 'static', graphUrl: './data/graph.json', apiUrl: './api' });
+      if (api && url.pathname === '/runtime-config.json' && req.method === 'GET') return send(res, 200, { mode: 'server', graphUrl: './data/graph.json', apiUrl: './api', site });
+      // A server's canonical graph is its database, including this compatibility URL.
+      if (api && url.pathname === '/data/graph.json' && req.method === 'GET') return send(res, 200, store.load());
       if (api && url.pathname.startsWith('/api/')) {
         if (req.method === 'GET' && url.pathname === '/api/health') return send(res, 200, { ok: true });
         if (req.method === 'GET' && url.pathname === '/api/graph') return send(res, 200, store.load());

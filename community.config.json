@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "graphFile": "content/graph.json",
+  "site": {
+    "brand": "共知",
+    "brandCaption": "COMMON GROUND",
+    "tagline": "开放的知识，一起补全",
+    "heading": "让零散经验，彼此连接。",
+    "footer": "每一份经验，都可以成为下一个人的起点。"
+  }
+}
