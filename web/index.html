@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="共同创建话题、补充经验、连接资料，探索一个可携带的社区知识网络。">
+  <meta name="theme-color" content="#142a35">
+  <title>校园共知 · 社区知识网络</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到内容</a>
+  <div id="app"><p class="loading" role="status">正在载入知识网络…</p></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="editor" aria-labelledby="editor-title"></dialog>
+  <dialog id="relation" aria-labelledby="relation-title"></dialog>
+  <dialog id="blueprint" aria-labelledby="blueprint-title"></dialog>
+  <dialog id="transfer" aria-labelledby="transfer-title"></dialog>
+  <dialog id="access" aria-labelledby="access-title"></dialog>
+  <input id="import-file" type="file" accept="application/json,.json" hidden>
+</body>
+</html>

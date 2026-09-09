@@ -1,0 +1,18 @@
+{
+  "name": "@information-community/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A portable, ontology-driven community knowledge graph for static sites and private servers.",
+  "engines": { "node": ">=24.12.0 <25" },
+  "exports": { ".": "./packages/core/index.js", "./adapters": "./packages/adapters/index.js" },
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "build": "node scripts/build.mjs",
+    "start": "node server/main.mjs",
+    "test": "node --test --test-timeout=15000 tests/*.test.mjs",
+    "validate": "node scripts/validate.mjs",
+    "apply": "node scripts/apply.mjs",
+    "snapshot": "node scripts/snapshot.mjs"
+  }
+}

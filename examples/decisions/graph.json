@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "decisions-demo",
+  "title": "项目决策库",
+  "revision": 0,
+  "description": "用另一份类型蓝图复用同一个核心和界面：把问题、决策与依据连接起来。",
+  "ontology": {
+    "nodeTypes": [
+      { "id": "problem", "label": "问题", "required": ["body"] },
+      { "id": "decision", "label": "决策", "required": ["body"] },
+      { "id": "evidence", "label": "依据", "required": ["source"] }
+    ],
+    "relationTypes": [
+      { "id": "addresses", "label": "解决", "from": ["decision"], "to": ["problem"] },
+      { "id": "justifies", "label": "支撑", "from": ["evidence"], "to": ["decision"] }
+    ]
+  },
+  "nodes": [
+    { "id": "deploy-question", "type": "problem", "title": "如何降低社区的部署门槛？", "body": "让维护者从静态托管开始，在需要共享在线写入时再启用服务器。", "source": "", "author": "项目示例", "tags": ["部署"], "updatedAt": "2026-09-09T08:00:00Z" },
+    { "id": "static-choice", "type": "decision", "title": "采用静态优先、可切换的存储适配器", "body": "共享同一份 JSON 图和验证核心。静态模式导出提案，服务器模式通过 API 写入。", "source": "", "author": "项目示例", "tags": ["架构"], "updatedAt": "2026-09-09T07:00:00Z" },
+    { "id": "pages-docs", "type": "evidence", "title": "GitHub Pages 静态托管说明", "body": "Pages 托管 HTML、CSS 和 JavaScript，适合生成好的知识快照。", "source": "https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages", "author": "项目示例", "tags": ["官方文档"], "updatedAt": "2026-09-09T06:00:00Z" }
+  ],
+  "edges": [
+    { "id": "decision-edge", "from": "static-choice", "to": "deploy-question", "type": "addresses", "reason": "静态浏览降低初次部署成本，存储适配器保留服务器扩展路径。" },
+    { "id": "evidence-edge", "from": "pages-docs", "to": "static-choice", "type": "justifies", "reason": "官方文档说明 Pages 的静态托管能力及边界。" }
+  ]
+}

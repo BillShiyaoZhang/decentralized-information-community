@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "campus-demo",
+  "title": "校园共知",
+  "revision": 0,
+  "description": "一个由大家共同补充的校园知识网络。以下为演示内容，不代表学校现行安排。",
+  "ontology": {
+    "nodeTypes": [
+      { "id": "topic", "label": "话题", "required": [] },
+      { "id": "note", "label": "经验", "required": ["body"] },
+      { "id": "resource", "label": "资料", "required": ["source"] }
+    ],
+    "relationTypes": [
+      { "id": "about", "label": "补充", "from": ["note", "resource"], "to": ["topic"] },
+      { "id": "related", "label": "相关", "from": ["topic", "note", "resource"], "to": ["topic", "note", "resource"] },
+      { "id": "supports", "label": "参考依据", "from": ["resource"], "to": ["note"] }
+    ]
+  },
+  "nodes": [
+    { "id": "arrival", "type": "topic", "title": "新生入学", "body": "从收到录取通知到第一次走进校园，把分散的准备事项整理到一起。欢迎补充亲身经验，并附上适用时间和来源。", "tags": ["新生", "入学"], "source": "", "author": "社区编辑组", "updatedAt": "2026-09-09T08:00:00Z" },
+    { "id": "courses", "type": "topic", "title": "选课与学习", "body": "关于课程选择、学习资源和学业安排的开放话题。不同年级和专业的经验可能不同，请说明背景。", "tags": ["学习", "课程"], "source": "", "author": "社区编辑组", "updatedAt": "2026-09-09T07:00:00Z" },
+    { "id": "living", "type": "topic", "title": "校园生活", "body": "住在哪里、如何出行、怎样找到一起做事的人。把生活里的小经验连接起来。", "tags": ["生活", "住宿"], "source": "", "author": "社区编辑组", "updatedAt": "2026-09-09T06:00:00Z" },
+    { "id": "packing", "type": "note", "title": "出发前，做一份自己的材料清单", "body": "先核对当年的入学通知，再把证件、录取材料和个人用品分开整理。\n\n把需要原件的材料单独收纳；电子副本妥善保存在自己的设备中，不要上传到公开社区。\n\n这是一条演示经验。具体材料以学校最新通知为准。", "tags": ["新生", "准备清单"], "source": "", "author": "林同学 · 示例", "updatedAt": "2026-09-09T05:00:00Z" },
+    { "id": "planning", "type": "note", "title": "选课前，先画出你的时间表", "body": "把必修课、个人学习时间和通勤时间放在同一张表上，再判断是否还有余量。\n\n咨询学长学姐时，可以问课程的作业形式和学习节奏，而不只问难不难。课程安排应以正式系统为准。", "tags": ["学习", "时间管理"], "source": "", "author": "陈同学 · 示例", "updatedAt": "2026-09-09T04:00:00Z" },
+    { "id": "walk", "type": "note", "title": "给校园探索留一个下午", "body": "在正式上课前熟悉教学楼、图书馆和生活设施的位置。记录自己实际走过的路线，比复制别人的通勤时间更有用。", "tags": ["生活", "新生"], "source": "", "author": "周同学 · 示例", "updatedAt": "2026-09-09T03:00:00Z" },
+    { "id": "official", "type": "resource", "title": "西交利物浦大学官方网站", "body": "核实学校公告和正式信息的起点。社区经验是补充，具体规定请回到官方来源确认。", "tags": ["官方信息", "新生"], "source": "https://www.xjtlu.edu.cn/zh", "author": "社区编辑组", "updatedAt": "2026-09-09T02:00:00Z" },
+    { "id": "qanda", "type": "resource", "title": "QandA：这个想法的起点", "body": "用户提出话题、补充信息，再用有理由的关联构成可检索的网络。当前项目将这个机制抽象为可复用的核心。", "tags": ["开源", "社区"], "source": "https://github.com/BillShiyaoZhang/QandA", "author": "社区编辑组", "updatedAt": "2026-09-09T01:00:00Z" }
+  ],
+  "edges": [
+    { "id": "e1", "from": "packing", "to": "arrival", "type": "about", "reason": "材料准备是入学前的一项具体行动。" },
+    { "id": "e2", "from": "official", "to": "arrival", "type": "about", "reason": "入学安排需要回到学校官方信息核实。" },
+    { "id": "e3", "from": "planning", "to": "courses", "type": "about", "reason": "时间安排帮助判断选课负担。" },
+    { "id": "e4", "from": "walk", "to": "living", "type": "about", "reason": "熟悉校园是日常生活的起点。" },
+    { "id": "e5", "from": "walk", "to": "arrival", "type": "about", "reason": "新生可以在开课前探索校园。" },
+    { "id": "e6", "from": "arrival", "to": "living", "type": "related", "reason": "入学准备与安顿生活相互关联。" },
+    { "id": "e7", "from": "arrival", "to": "courses", "type": "related", "reason": "入学后接着进入选课与学习阶段。" },
+    { "id": "e8", "from": "qanda", "to": "arrival", "type": "related", "reason": "新生话题用于演示 QandA 的信息填充模式。" }
+  ]
+}

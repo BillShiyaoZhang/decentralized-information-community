@@ -1,0 +1,13 @@
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { validateGraph } from '../packages/core/index.js';
+const root = resolve(import.meta.dirname, '..');
+const graphPath = resolve(process.env.GRAPH_FILE ?? `${root}/examples/campus/graph.json`);
+const graph = validateGraph(JSON.parse(await readFile(graphPath, 'utf8')));
+await mkdir(`${root}/dist/data`, { recursive: true });
+await cp(`${root}/web`, `${root}/dist`, { recursive: true });
+await cp(`${root}/packages`, `${root}/dist/packages`, { recursive: true });
+await writeFile(`${root}/dist/data/graph.json`, JSON.stringify(graph, null, 2) + '\n');
+await writeFile(`${root}/dist/runtime-config.json`, JSON.stringify({ mode: 'static', graphUrl: './data/graph.json', apiUrl: './api' }));
+await writeFile(`${root}/dist/.nojekyll`, '');
+console.log(`Built static site: ${graph.nodes.length} nodes, ${graph.edges.length} edges; relative URLs support GitHub Pages subpaths.`);

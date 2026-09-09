@@ -1,0 +1,13 @@
+import { readFile, mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { SqliteStore } from './store.mjs';
+import { createApp } from './http.mjs';
+const root = resolve(import.meta.dirname, '..');
+const dataDir = resolve(process.env.DATA_DIR ?? `${root}/.runtime`);
+await mkdir(dataDir, { recursive: true });
+const seed = JSON.parse(await readFile(resolve(process.env.GRAPH_FILE ?? `${root}/examples/campus/graph.json`), 'utf8'));
+const store = new SqliteStore(`${dataDir}/community.sqlite`, seed);
+const server = createApp({ root: `${root}/dist`, store, writeToken: process.env.WRITE_TOKEN ?? '' });
+const port = Number(process.env.PORT ?? 4173), host = process.env.HOST ?? '127.0.0.1';
+server.listen(port, host, () => console.log(`Community server: http://${host}:${port} (${process.env.WRITE_TOKEN ? 'writes require bearer token' : 'read-only; set WRITE_TOKEN to enable writes'})`));
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => server.close(() => { store.close(); process.exit(0); }));
