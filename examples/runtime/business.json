@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "contentProfileFile": "content-profile.json",
+  "lifecycleFile": "lifecycle.json",
+  "roles": {
+    "content_editor": ["content:read", "content:edit"],
+    "content_reviewer": ["content:read", "content:publish", "content:visibility"],
+    "pilot_operator": ["lifecycle:manage"],
+    "safety_reviewer": ["lifecycle:manage", "content:visibility"],
+    "account_admin": ["accounts:manage"],
+    "operations_admin": ["operations:manage"],
+    "participant": ["lifecycle:self"]
+  }
+}

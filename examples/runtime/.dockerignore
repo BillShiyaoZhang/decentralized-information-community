@@ -1,0 +1,7 @@
+node_modules
+.runtime
+dist
+.git
+.env
+private-account.json
+private-backup.json

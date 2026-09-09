@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "entities": [
+    {
+      "id": "guide-answer",
+      "type": "answer",
+      "externalId": "d1-answer-17",
+      "extensions": {
+        "legacySlug": "course-choice"
+      }
+    },
+    {
+      "id": "guide-source",
+      "type": "artifact",
+      "externalId": "d1-artifact-31"
+    },
+    {
+      "id": "guide-link",
+      "type": "artifact",
+      "externalId": "d1-artifact-32"
+    }
+  ],
+  "revisions": [
+    {
+      "id": "artifact-revision-31",
+      "entityId": "guide-source",
+      "number": 7,
+      "parentRevisionId": "artifact-revision-30",
+      "createdAt": "2026-09-01T08:00:00Z",
+      "data": {
+        "title": "选课说明（演示来源）",
+        "url": "https://example.org/course-guide",
+        "mode": "excerpt",
+        "text": "原版证据：课程信息应通过学校系统核实。",
+        "rights": {
+          "basis": "permission",
+          "reference": "example-permission-record",
+          "expiresAt": "2099-01-01T00:00:00Z"
+        }
+      },
+      "extensions": {
+        "legacyRevision": 7,
+        "mapping": {
+          "system": "fixture-only"
+        }
+      }
+    },
+    {
+      "id": "artifact-revision-32",
+      "entityId": "guide-link",
+      "number": 1,
+      "parentRevisionId": null,
+      "createdAt": "2026-09-01T08:00:00Z",
+      "data": {
+        "title": "学校主页（仅链接）",
+        "url": "https://example.org/university",
+        "mode": "link-only"
+      },
+      "extensions": {
+        "externalId": "legacy-link-revision-32",
+        "externalRevision": 1
+      }
+    },
+    {
+      "id": "answer-revision-17",
+      "entityId": "guide-answer",
+      "number": 3,
+      "parentRevisionId": null,
+      "createdAt": "2026-09-01T09:00:00Z",
+      "data": {
+        "title": "西交利物浦选课信息（演示）",
+        "sentences": [
+          {
+            "id": "sentence-1",
+            "kind": "fact",
+            "text": "课程信息应通过学校系统核实。"
+          },
+          {
+            "id": "sentence-2",
+            "kind": "advice",
+            "text": "请结合自己的培养方案查阅。"
+          }
+        ],
+        "scope": {
+          "campus": [
+            "universal"
+          ],
+          "stage": [
+            "undergraduate"
+          ]
+        },
+        "impact": "routine",
+        "origin": "human",
+        "reviewDueAt": "2020-01-01T00:00:00Z",
+        "privateEditorialNote": "This private extension must never enter a public DTO."
+      },
+      "extensions": {
+        "externalRevisionId": "legacy-answer-revision-17",
+        "retainedField": [
+          "migration",
+          3
+        ]
+      }
+    },
+    {
+      "id": "artifact-revision-30",
+      "entityId": "guide-source",
+      "number": 6,
+      "parentRevisionId": null,
+      "createdAt": "2026-09-01T08:00:00Z",
+      "data": {
+        "title": "历史选课说明（演示来源）",
+        "url": "https://example.org/course-guide",
+        "mode": "excerpt",
+        "text": "原版证据：课程信息应通过学校系统核实。",
+        "rights": {
+          "basis": "permission",
+          "reference": "example-permission-record",
+          "expiresAt": "2099-01-01T00:00:00Z"
+        }
+      },
+      "extensions": {
+        "legacyRevision": 6,
+        "mapping": {
+          "system": "fixture-only"
+        }
+      }
+    }
+  ],
+  "citations": [
+    {
+      "id": "citation-17-a",
+      "revisionId": "answer-revision-17",
+      "sentenceId": "sentence-1",
+      "sourceEntityId": "guide-source",
+      "sourceRevisionId": "artifact-revision-31",
+      "position": {
+        "kind": "text",
+        "start": 5,
+        "end": 19
+      },
+      "order": 0,
+      "extensions": {
+        "legacySpanId": "span-17"
+      }
+    },
+    {
+      "id": "citation-17-b",
+      "revisionId": "answer-revision-17",
+      "sentenceId": "sentence-1",
+      "sourceEntityId": "guide-link",
+      "sourceRevisionId": "artifact-revision-32",
+      "position": {
+        "kind": "link"
+      },
+      "order": 1,
+      "externalId": "legacy-link-citation-17"
+    }
+  ],
+  "links": []
+}

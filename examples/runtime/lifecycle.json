@@ -1,0 +1,28 @@
+{
+  "workflows": {
+    "report": {
+      "initialState": "submitted",
+      "states": ["submitted", "triage", "resolved", "rejected"],
+      "transitions": { "submitted": ["triage", "rejected"], "triage": ["triage", "resolved", "rejected"], "resolved": [], "rejected": [] },
+      "terminalStates": ["resolved", "rejected"],
+      "decisionCodes": ["corrected", "no_change"],
+      "publicResults": { "corrected": { "code": "corrected", "label": "The published information has been corrected." } },
+      "retentionMs": 2592000000,
+      "requireConsent": false,
+      "eligibilityFields": []
+    },
+    "private_intake": {
+      "initialState": "submitted",
+      "states": ["submitted", "reviewing", "accepted", "declined"],
+      "transitions": { "submitted": ["reviewing", "declined"], "reviewing": ["reviewing", "accepted", "declined"], "accepted": [], "declined": [] },
+      "terminalStates": ["accepted", "declined"],
+      "decisionCodes": ["used", "not_used"],
+      "publicResults": {},
+      "retentionMs": 604800000,
+      "requireConsent": true,
+      "purpose": "community_research",
+      "consentVersion": "2026-09",
+      "eligibilityFields": ["eligible", "adult"]
+    }
+  }
+}

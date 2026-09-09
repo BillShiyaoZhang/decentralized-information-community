@@ -63,6 +63,12 @@ const related = matches.length ? neighborhood(graph, matches[0].id, 2) : null;
 
 `xjtlu-unofficial-guide` 的答案详情页已采用这条路线：从公开答案投影 `答案 → 主题 ← 答案`，展示“同主题其他答案”，复用原有卡片的证据与复核提示。[包 API](packages/core/README.md)、[接入说明](docs/extending.md)、[校园集成](docs/integrations/xjtlu-unofficial-guide.md)。
 
+## 可选：受治理的独立运行时
+
+需要不可变证据修订、具名 MFA、审核发布或私有工作流时，可消费 `@information-community/runtime@0.1.0`。运行 `npm run package:runtime` 获得固定版本产物；使用方只维护数据、业务配置、部署声明和可选页面。运行时使用 SQLite，包含会话撤销、统一公开读取策略、加密私有记录、同意撤回与保留清理。
+
+参见[独立消费示例](examples/runtime/README.md)、[四项需求评估与接入边界](docs/runtime.md)及[运行时契约](packages/runtime/README.md)。该可选模式仅在线提供受治理内容；上面的纯图、Pages 和轻量服务器路线保持独立。
+
 ## 本地开发与验证
 
 ```sh
@@ -73,6 +79,7 @@ npm test
 npm run validate
 npm run build
 npm run package:core
+npm run package:runtime
 ```
 
 只看页面也可以 `docker compose up -d dev`。开发服务器会检测配置、内容、页面与核心变动，重新构建后刷新浏览器。运行测试前需要安装开发依赖；运行时本身不依赖第三方库。没有本机 Node 时，先 `docker compose run --rm dev npm ci`，再 `docker compose exec -T dev npm test`。
@@ -94,6 +101,6 @@ scripts/               构建、校验、提案合并、导入、导出、打包
 
 日常内容放在 `content/`，站点设置放在 `community.config.json`，升级引擎时保留这两处。模板生成的仓库是独立项目，不会自动接收上游更新；需要 GitHub 的上游同步功能可选择 Fork。核心包则通过版本号、打包产物和使用方 lockfile 升级。贡献代码和内容见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-目前没有 P2P / 联邦同步、删除撤回协议、账户系统、审核队列或 OWL 推理。全图版本冲突保守拒绝。上限为 10000 节点 / 40000 关系，适合先验证小型社区。[架构与数据契约](docs/architecture.md)描述具体边界。
+轻量 Graph v1 模式没有 P2P / 联邦同步、删除撤回协议、账户系统、审核队列或 OWL 推理。需要账户、审核与撤回时使用可选 runtime。全图版本冲突保守拒绝，Graph v1 上限为 10000 节点 / 40000 关系，适合先验证小型社区。[架构与数据契约](docs/architecture.md)描述具体边界。
 
 许可证：[MIT](LICENSE)。

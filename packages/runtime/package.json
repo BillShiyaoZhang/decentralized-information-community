@@ -1,0 +1,12 @@
+{
+  "name": "@information-community/runtime",
+  "version": "0.1.0",
+  "description": "Optional governed community runtime: immutable evidence, MFA, publication and private lifecycle.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=24.12.0 <25" },
+  "dependencies": { "@information-community/core": "0.2.0" },
+  "bin": { "community-runtime": "cli.mjs" },
+  "exports": { ".": "./index.mjs", "./store": "./store.mjs", "./content": "./content.mjs", "./auth": "./auth.mjs", "./lifecycle": "./lifecycle.mjs", "./errors": "./errors.mjs" },
+  "files": ["*.mjs", "ui", "README.md", "LICENSE"]
+}

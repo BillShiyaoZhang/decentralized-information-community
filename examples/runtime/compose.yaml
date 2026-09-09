@@ -1,0 +1,11 @@
+services:
+  community:
+    build: .
+    ports: ["127.0.0.1:4180:4180"]
+    environment:
+      RUNTIME_MFA_KEY: ${RUNTIME_MFA_KEY:?Set a private random 32-byte hex key}
+      RUNTIME_KEYRING: ${RUNTIME_KEYRING:?Set a private AES-GCM keyring JSON}
+    volumes: ["runtime-data:/community/.runtime"]
+    restart: unless-stopped
+volumes:
+  runtime-data:

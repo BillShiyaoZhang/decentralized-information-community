@@ -15,6 +15,7 @@ jobs:
       - run: npm run validate
       - run: npm run build
       - run: npm run package:core
+      - run: npm run package:runtime
   core-node22:
     runs-on: ubuntu-latest
     steps:

@@ -1,5 +1,7 @@
 # 接入自己的业务
 
+需要复用身份、发布、不可变证据或私有队列的应用，可采用新的 [runtime 固定产物](runtime.md)。下文关于由业务服务器自行执行治理的约定，适用于单独使用纯图 core 的集成方式。
+
 ## 只换数据和蓝图
 
 从 `examples/campus/graph.json` 或 `examples/decisions/graph.json` 复制一份，设置独立社区 `id`，再定义类型。

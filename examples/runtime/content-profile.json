@@ -1,0 +1,87 @@
+{
+  "id": "campus-guide",
+  "entityTypes": [
+    {
+      "id": "answer",
+      "label": "答案",
+      "role": "content",
+      "schema": {
+        "type": "object",
+        "required": [
+          "title",
+          "sentences",
+          "impact",
+          "origin"
+        ],
+        "properties": {
+          "impact": {
+            "type": "string",
+            "enum": [
+              "routine",
+              "high"
+            ]
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "human",
+              "ai_draft"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "artifact",
+      "label": "来源",
+      "role": "source"
+    }
+  ],
+  "evidence": {
+    "factualSentenceKinds": [
+      "fact"
+    ],
+    "allowedModes": [
+      "link-only",
+      "excerpt"
+    ],
+    "excerptRights": [
+      "permission",
+      "open-license",
+      "public-domain"
+    ],
+    "requireCitationsOnWrite": true
+  },
+  "publication": {
+    "blockedValues": {
+      "impact": [
+        "high"
+      ],
+      "origin": [
+        "ai_draft"
+      ]
+    }
+  },
+  "scope": {
+    "dimensions": [
+      "campus",
+      "stage"
+    ],
+    "universal": "universal",
+    "unknown": "unknown"
+  },
+  "search": {
+    "aliases": {
+      "西交利物浦": [
+        "xjtlu",
+        "西浦"
+      ],
+      "苏州": [
+        "suzhou"
+      ]
+    }
+  },
+  "warnings": {
+    "reviewOverdue": "已超过复核期限，请核对最新官方信息。"
+  }
+}

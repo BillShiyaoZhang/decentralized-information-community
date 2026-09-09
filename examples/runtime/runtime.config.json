@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "mode": "server",
+  "communityId": "campus-guide-example",
+  "site": { "brand": "社区指南 · 受治理运行时" },
+  "businessFile": "business.json",
+  "contentFile": "content.json",
+  "dataDirectory": ".runtime",
+  "uiDirectory": "ui",
+  "maintenanceIntervalMs": 60000
+}

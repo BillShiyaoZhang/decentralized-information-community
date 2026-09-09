@@ -5,7 +5,7 @@
   "type": "module",
   "description": "A portable, ontology-driven community knowledge graph for static sites and private servers.",
   "engines": { "node": ">=24.12.0 <25" },
-  "workspaces": ["packages/core"],
+  "workspaces": ["packages/core", "packages/runtime"],
   "devDependencies": { "typescript": "5.9.3" },
   "scripts": {
     "dev": "node scripts/serve.mjs",
@@ -16,6 +16,7 @@
     "apply": "node scripts/apply.mjs",
     "snapshot": "node scripts/snapshot.mjs",
     "init:server": "node scripts/init-server.mjs",
-    "package:core": "node scripts/pack-core.mjs"
+    "package:core": "node scripts/pack-core.mjs",
+    "package:runtime": "node scripts/pack-runtime.mjs"
   }
 }

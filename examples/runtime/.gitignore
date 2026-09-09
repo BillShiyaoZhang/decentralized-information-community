@@ -1,0 +1,6 @@
+node_modules/
+.runtime/
+dist/
+.env
+private-account.json
+private-backup.json
