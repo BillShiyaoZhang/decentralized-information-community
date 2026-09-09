@@ -1,9 +1,11 @@
 import { createServer } from 'node:http';
 import { graphStats, neighborhood } from '@information-community/core';
 import { RuntimeError } from './errors.mjs';
-import { defaultRolePermissions, executeAuthorized, localIdentityProvider, login, readAuthorized, revokeSession } from './auth.mjs';
+import { authenticateIdentity, assertParticipantOperation, defaultRolePermissions, executeAuthorized, localIdentityProvider, login, readAuthorized, revokeSession, revokeIdentitySubject } from './auth.mjs';
+import { issueParticipantInvitation, redeemParticipantInvitation, cancelParticipantInvitation } from './participants.mjs';
+import { readAnonymousReport, submitAnonymousReport } from './reports.mjs';
 import { getEntity, hideContent, importContent, projectPublic, publicContentExport, publishContent, readPublicRevision, readRevision, setSourceDisposition } from './content.mjs';
-import { lifecycleCommand, lifecycleDetail, lifecycleList, lifecyclePublicResults } from './lifecycle.mjs';
+import { lifecycleCommand, lifecycleDetail, lifecycleList, lifecyclePublicResults, lifecycleSelfList } from './lifecycle.mjs';
 
 const send = (res, status, data) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); };
 const fail = (code, message, status = 400) => { throw new RuntimeError(code, message, status); };
@@ -25,9 +27,10 @@ function scopeFilter(url) {
  * Governed HTTP runtime. Only explicit in-memory UI assets are served: no path
  * can fall through to a database, backup, private draft or stale static graph.
  * A custom identity provider is trusted server code and must synchronously
- * validate its named MFA principal and revocation state inside each transaction.
+ * validate its principal and revocation state inside each transaction. Invitation
+ * assurance is accepted only by explicitly configured self-service operations.
  */
-export function createRuntimeApp({ store, auth = {}, lifecycle = {}, assets = {}, clock = Date.now }) {
+export function createRuntimeApp({ store, auth = {}, lifecycle = {}, anonymousReports, assets = {}, clock = Date.now }) {
   const policy = auth.rolePermissions ?? defaultRolePermissions;
   const provider = auth.provider ?? localIdentityProvider;
   const server = createServer(async (req, res) => {
@@ -45,15 +48,27 @@ export function createRuntimeApp({ store, auth = {}, lifecycle = {}, assets = {}
         // verifying the session: a logout during upload must take effect.
         const input = await body(req), now = clock();
         if (path === '/api/auth/login') return send(res, 200, login(store, input, { mfaKey: auth.mfaKey, now }));
-        if (path === '/api/auth/logout') return send(res, 200, revokeSession(store, token, { now, policy }));
-        if (path === '/api/auth/revoke') return send(res, 200, revokeSession(store, token, { sessionId: input.sessionId, now, policy }));
+        if (path === '/api/auth/logout') return send(res, 200, revokeSession(store, token, { now, policy, provider, participantsConfig: auth.participants }));
+        if (path === '/api/auth/revoke') {
+          if (Object.keys(input).length !== 1 || typeof input.sessionId !== 'string' || !input.sessionId) fail('INVALID_REQUEST', '需要要退出的设备会话 ID');
+          return send(res, 200, revokeSession(store, token, { sessionId: input.sessionId, now, policy, provider, participantsConfig: auth.participants }));
+        }
+        if (path === '/api/participants/redeem') return send(res, 200, redeemParticipantInvitation(store, input, { config: auth.participants, now }));
         const key = req.headers['idempotency-key'];
-        const protectedOperation = (permission, action, handler, replayable = true, audit = true) => {
-          return executeAuthorized(store, token, { permission, action, key: replayable ? key : null, input, policy, provider, now, audit }, (state, principal) => {
+        if (path === '/api/reports') return send(res, 200, submitAnonymousReport(store, input, { config: anonymousReports, lifecycle, key, now }));
+        const protectedOperation = (permission, action, handler, replayable = true, audit = true, self = false) => {
+          return executeAuthorized(store, token, { permission, action, key: replayable ? key : null, input, policy, provider, participantsConfig: auth.participants, now, audit,
+            assurance: self ? 'invitation' : 'mfa', authorize: self ? principal => assertParticipantOperation(principal, input, auth.participants) : undefined }, (state, principal) => {
             if (replayable && !key) fail('IDEMPOTENCY_KEY_REQUIRED', '写入需要 Idempotency-Key');
             return handler(state, principal);
           });
         };
+        if (path === '/api/participants/invitations') return send(res, 200, protectedOperation('accounts:manage', 'participant.invite', state => issueParticipantInvitation(state, input, { config: auth.participants, now }), false));
+        if (path === '/api/participants/cancel-invitation') return send(res, 200, protectedOperation('accounts:manage', 'participant.invitation.cancel', state => cancelParticipantInvitation(state, input, { now }), false));
+        if (path === '/api/participants/revoke') return send(res, 200, protectedOperation('accounts:manage', 'participant.revoke', state => {
+          if (Object.keys(input).length !== 1 || typeof input.subjectId !== 'string') fail('INVALID_REQUEST', '需要参与者主体 ID');
+          return revokeIdentitySubject(state, input.subjectId, { provider, now });
+        }, false));
         const commands = {
           '/api/content/import': ['content:edit', 'content.import', importContent],
           '/api/content/publish': ['content:publish', 'content.publish', publishContent],
@@ -75,21 +90,25 @@ export function createRuntimeApp({ store, auth = {}, lifecycle = {}, assets = {}
         if (path === '/api/private/command') {
           if (!['create', 'transition', 'consent', 'withdraw', 'logout', 'retain', 'task', 'import'].includes(input.action)) fail('INVALID_ACTION', '无效私有生命周期操作');
           const permission = ['consent', 'create', 'withdraw', 'logout'].includes(input.action) ? ['lifecycle:self', 'lifecycle:manage'] : input.action === 'retain' || input.action === 'task' ? ['lifecycle:manage', 'operations:manage'] : 'lifecycle:manage';
-          return send(res, 200, protectedOperation(permission, `private.${input.action}`, (state, principal) => lifecycleCommand(state, principal, input, { ...lifecycle, policy, now }), !['withdraw', 'logout'].includes(input.action), false));
+          const self = ['consent', 'create', 'withdraw', 'logout'].includes(input.action);
+          return send(res, 200, protectedOperation(permission, `private.${input.action}`, (state, principal) => lifecycleCommand(state, principal, input, { ...lifecycle, participants: auth.participants, provider, policy, now }), !['withdraw', 'logout'].includes(input.action), false, self));
         }
         return send(res, 404, { error: '接口不存在', code: 'NOT_FOUND' });
       }
       if (req.method === 'GET' && path.startsWith('/api/')) {
         const now = clock();
         if (path === '/api/health') return send(res, 200, { ok: true, mode: 'governed', staticExport: false });
-        if (path === '/api/auth/me') return send(res, 200, store.transact(state => provider.authenticate(state, token, { now })));
-        if (path === '/api/private/list') return send(res, 200, readAuthorized(store, token, { permission: 'lifecycle:manage', policy, provider, now }, state => lifecycleList(state)));
-        if (path.startsWith('/api/private/')) return send(res, 200, readAuthorized(store, token, { permission: ['lifecycle:manage', 'lifecycle:self'], policy, provider, now }, (state, principal) => lifecycleDetail(state, principal, decodeURIComponent(path.slice('/api/private/'.length)), { ...lifecycle, policy, now })));
-        if (path.startsWith('/api/editor/revisions/')) return send(res, 200, readAuthorized(store, token, { permission: 'content:read', policy, provider, now }, state => readRevision(state.modules.content, decodeURIComponent(path.slice('/api/editor/revisions/'.length)))));
+        if (path === '/api/auth/me') return send(res, 200, store.transact(state => authenticateIdentity(state, token, { provider, participantsConfig: auth.participants, now })));
+        if (path === '/api/reports/status') return send(res, 200, readAnonymousReport(store.read(), token, { config: anonymousReports, lifecycleConfig: lifecycle.config, now }));
+        if (path === '/api/private/self') return send(res, 200, readAuthorized(store, token, { permission: 'lifecycle:self', policy, provider, participantsConfig: auth.participants, assurance: 'invitation', now,
+          authorize: principal => assertParticipantOperation(principal, { action: 'list' }, auth.participants) }, (state, principal) => lifecycleSelfList(state, principal, { ...lifecycle, participants: auth.participants, policy, now })));
+        if (path === '/api/private/list') return send(res, 200, readAuthorized(store, token, { permission: 'lifecycle:manage', policy, provider, participantsConfig: auth.participants, now }, state => lifecycleList(state)));
+        if (path.startsWith('/api/private/')) return send(res, 200, readAuthorized(store, token, { permission: ['lifecycle:manage', 'lifecycle:self'], policy, provider, participantsConfig: auth.participants, now }, (state, principal) => lifecycleDetail(state, principal, decodeURIComponent(path.slice('/api/private/'.length)), { ...lifecycle, policy, now })));
+        if (path.startsWith('/api/editor/revisions/')) return send(res, 200, readAuthorized(store, token, { permission: 'content:read', policy, provider, participantsConfig: auth.participants, now }, state => readRevision(state.modules.content, decodeURIComponent(path.slice('/api/editor/revisions/'.length)))));
         const state = store.read(), data = state.modules.content, contentNow = new Date(now).toISOString();
         if (path === '/api/public-results') {
           const visible = new Set(projectPublic(data, { now: contentNow }).nodes.map(value => value.id));
-          return send(res, 200, lifecyclePublicResults(state, { now }).filter(value => visible.has(value.entityId) && (!value.revisionId || readPublicRevision(data, value.revisionId, { now: contentNow }))));
+          return send(res, 200, lifecyclePublicResults(state, { config: lifecycle.config, now }).filter(value => visible.has(value.entityId) && (!value.revisionId || readPublicRevision(data, value.revisionId, { now: contentNow }))));
         }
         if (path.startsWith('/api/revisions/')) {
           const revision = readPublicRevision(data, decodeURIComponent(path.slice('/api/revisions/'.length)), { now: contentNow });

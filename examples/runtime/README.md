@@ -18,7 +18,19 @@
 
 报告闭环：以 participant 提交私有命令 `{"action":"create","id":"report-1","type":"report","consentEpoch":0,"entityId":"guide-answer","revisionId":"answer-revision-17","payload":{"message":"需复核"}}`；管理者可先将其从 submitted 改到 triage，再携带新 expectedVersion 改到 resolved 并给出 corrected 决定码。内部备注加密，公开处理结果仅在相关内容可公开时显示。
 
-研究线索使用 private_intake 类型，先提交当前版本的 consent、确认 eligible/adult，再带返回的 consentEpoch 创建。withdraw 清理载荷和关联并退出所有设备；logout 只退出本设备。说明、资格、同意文本、字段、保留时间和试点业务口径由消费仓库决定。
+研究线索使用 private_intake 类型。参与者无需具名密码/TOTP 账户：管理者线下核验资格后，将 `{"eligibility":{"eligible":true,"adult":true}}` 写入私有审核文件，执行 `npx --no-install community-runtime invite reviewed-eligibility.json`，安全交付一次性 token。打开 `/extensions/participate.html` 兑换邀请，确认同意，提交线索并查看本人状态。另一个设备由管理者为相同 subjectId 签发新邀请；同一邀请不能重用。页面只保存内存会话，刷新后需新邀请。withdraw 清理载荷和关联并退出所有设备；logout 只退出本设备。
+
+资格来自管理员签发记录，页面不能自报提升。示例 consent 文本仅演示流程，正式同意文本、资格核验、字段、保留时间和试点口径由消费仓库维护。编辑发布及私有队列管理依然使用具名 MFA；需要在线签发邀请的管理员另配 `accounts:manage`。
+
+同一页面的匿名隐私报告无需加入研究，仅接受 message（最多 2000 字符），返回高熵状态回执。只有持回执者可查询该报告的摘要。示例按全库每分钟 20 次限制，匿名入口不能调用通用私有命令。业务 JSON 可禁用或调整这两条可选路线。
+
+恢复启用参与者的备份需核对当前撤回及凭据撤销登记，并传入 `{"withdrawnSubjectIds":[],"revokedSubjectIds":[]}`；空数组同样表示已核对。恢复后所有旧邀请、会话及匿名回执失效，撤回主体不能重新签发。
+
+具名账户维护使用 runtime 0.3.0 的离线命令，不需要另写账户服务。在经过业务授权的受信主机设置 `RUNTIME_OPERATOR_ID` 为实际操作员身份，执行 `npx --no-install community-runtime accounts` 获取 account ID 和 version，再执行 `npx --no-install community-runtime account private-change.json`。例如维护文件为 `{"action":"credentials","accountId":"editor-one","expectedVersion":0,"password":"<new-random-password>","totpSecret":"<new-Base32-secret>"}`；真实秘密仅放私有文件，并安全交付新验证器密钥。凭据轮换保持同一 actor ID 和历史归属，同时退出该账户全部设备。
+
+同一命令支持 `roles`（附 roles 数组）、`status`（附 active 布尔值）和 `revoke-sessions`，均要求最新 expectedVersion。普通停用可重新启用，永久撤销或隐私撤回不能重新激活。MFA 丢失由操作员完成核验后重新引导，没有匿名找回入口。备份恢复会清空所有具名账户凭据：读取 accounts 中的新 version 后，同时重新配置密码和 TOTP；只重新启用状态不解锁账户。具名账户备份即使未开启参与者模块，也要求当前 revokedSubjectIds 清单。
+
+升级会将 auth schema 1 迁移到 2；旧版 active:false 保守视为永久撤销，升级前应核对副本。错误的未兑换邀请可用 `cancel-invitation invitation.json` 单独取消，文件只含 invitationId，其他设备和邀请保留。
 
 Docker 部署先完成引导，使私有账户进入持久化 volume。可先 `docker compose run --rm -v <private-account-file>:/run/account.json:ro community npm run bootstrap -- /run/account.json`，随后 `docker compose up --build -d`。环境变量通过部署环境或未提交的 .env 注入。Dockerfile 不复制引导文件、备份或本地数据；volume 保存运行时状态。
 

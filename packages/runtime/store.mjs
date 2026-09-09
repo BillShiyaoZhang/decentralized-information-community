@@ -24,21 +24,7 @@ export class RuntimeStore {
         const existing = this.db.prepare('SELECT value FROM runtime_state WHERE id=1').get();
         const state = existing ? JSON.parse(existing.value) : this.emptyState();
         const previous = existing ? jsonClone(state) : undefined;
-        if (state.formatVersion !== 1 || state.communityId !== communityId) throw new RuntimeError('INCOMPATIBLE_DATABASE', 'Database format or community identity does not match');
-        for (const name of Object.keys(state.modules)) if (!this.modules.has(name)) throw new RuntimeError('MISSING_MODULE', `Stored module ${name} must be installed before opening this database`);
-        for (const [name, module] of this.modules) {
-          if (!(name in state.modules)) {
-            state.modules[name] = jsonClone(module.initialState()); state.moduleVersions[name] = module.schemaVersion;
-          }
-          let version = state.moduleVersions[name];
-          if (!Number.isSafeInteger(version) || version < 1 || version > module.schemaVersion) throw new RuntimeError('INCOMPATIBLE_MODULE', `Cannot downgrade ${name}`);
-          while (version < module.schemaVersion) {
-            const migrate = module.migrations?.[version + 1];
-            if (typeof migrate !== 'function') throw new RuntimeError('MISSING_MIGRATION', `${name} needs a migration to version ${version + 1}`);
-            const next = migrate(jsonClone(state.modules[name]), { fromVersion: version, toVersion: version + 1, communityId });
-            this.assertSync(next); state.modules[name] = jsonClone(next); state.moduleVersions[name] = ++version;
-          }
-        }
+        this.migrateModules(state, { initializeMissing: true });
         this.validate(state, previous);
         this.db.prepare('INSERT INTO runtime_state(id,value) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value').run(JSON.stringify(state));
         this.db.exec('COMMIT');
@@ -48,6 +34,26 @@ export class RuntimeStore {
   emptyState() { return { formatVersion: 1, communityId: this.communityId, revision: 0, modules: {}, moduleVersions: {}, audit: [], idempotency: {} }; }
   assertSync(result) {
     if (result && typeof result.then === 'function') throw new RuntimeError('ASYNC_TRANSACTION', 'Transaction and migration callbacks must be synchronous');
+  }
+  /** Open and restore use the same synchronous, rollback-protected upgrade path. */
+  migrateModules(state, { initializeMissing = false } = {}) {
+    if (!state || state.formatVersion !== 1 || state.communityId !== this.communityId) throw new RuntimeError('INCOMPATIBLE_DATABASE', 'Database format or community identity does not match');
+    if (!state.modules || Array.isArray(state.modules) || typeof state.modules !== 'object' || !state.moduleVersions || Array.isArray(state.moduleVersions) || typeof state.moduleVersions !== 'object') throw new RuntimeError('INVALID_STATE', 'Invalid module envelope');
+    for (const name of Object.keys(state.modules)) if (!this.modules.has(name)) throw new RuntimeError('MISSING_MODULE', `Stored module ${name} must be installed before opening this database`);
+    for (const [name, module] of this.modules) {
+      if (!Object.hasOwn(state.modules, name)) {
+        if (!initializeMissing) throw new RuntimeError('INCOMPATIBLE_MODULE', `Backup is missing module ${name}`);
+        state.modules[name] = jsonClone(module.initialState()); state.moduleVersions[name] = module.schemaVersion;
+      }
+      let version = state.moduleVersions[name];
+      if (!Number.isSafeInteger(version) || version < 1 || version > module.schemaVersion) throw new RuntimeError('INCOMPATIBLE_MODULE', `Cannot downgrade ${name}`);
+      while (version < module.schemaVersion) {
+        const migrate = module.migrations?.[version + 1];
+        if (typeof migrate !== 'function') throw new RuntimeError('MISSING_MIGRATION', `${name} needs a migration to version ${version + 1}`);
+        const next = migrate(jsonClone(state.modules[name]), { fromVersion: version, toVersion: version + 1, communityId: this.communityId });
+        this.assertSync(next); state.modules[name] = jsonClone(next); state.moduleVersions[name] = ++version;
+      }
+    }
   }
   validate(state, previous) {
     jsonClone(state);
@@ -111,6 +117,7 @@ export class RuntimeStore {
       if (state.revision !== 0 || state.audit.length || Object.keys(state.idempotency).length) throw new RuntimeError('RESTORE_NOT_EMPTY', 'Restore requires a new empty database', 409);
       for (const [name, module] of this.modules) if (canonicalJson(state.modules[name]) !== canonicalJson(module.initialState())) throw new RuntimeError('RESTORE_NOT_EMPTY', 'Restore requires a new empty database', 409);
       const restored = jsonClone(backup.state);
+      this.migrateModules(restored);
       this.validate(restored);
       for (const module of this.modules.values()) if (module.prepareRestore) this.assertSync(module.prepareRestore(restored, options));
       restored.revision++;
@@ -120,7 +127,7 @@ export class RuntimeStore {
       this.validate(restored);
       this.db.prepare('UPDATE runtime_state SET value=? WHERE id=1').run(JSON.stringify(restored));
       this.db.exec('COMMIT');
-      return { restored: true, sessionsInvalidated: true };
+      return { restored: true, sessionsInvalidated: true, accountsRequiringCredentials: restored.modules.auth?.accounts.filter(account => account.credentialsRequired && account.revokedAt === null).length ?? 0 };
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
     finally { this.inTransaction = false; }
   }

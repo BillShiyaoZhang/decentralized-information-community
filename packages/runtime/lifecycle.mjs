@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { RuntimeError } from './errors.mjs';
-import { defaultRolePermissions, requirePermission } from './auth.mjs';
+import { defaultRolePermissions, requirePermission, assertParticipantOperation, revokeIdentitySubject, revokeIdentitySession, invalidateIdentityCredentials } from './auth.mjs';
 import { projectPublic, readPublicRevision } from './content.mjs';
 
 const fail = (code, message, status = 400) => { throw new RuntimeError(code, message, status); };
@@ -118,7 +118,7 @@ function validateLifecycle(data, previous) {
     if (record.purgedAt !== null) {
       if ([record.payload, record.subjectId, record.entityId, record.revisionId, record.externalId, record.assignee, record.decisionCode, record.publicResult].some(value => value !== null)) fail('INVALID_LIFECYCLE', 'Purged record retains private data or associations');
     } else validateEnvelope(record.payload, id);
-    if (record.publicResult !== null && (!object(record.publicResult) || !identifier(record.publicResult.code) || typeof record.publicResult.label !== 'string' || record.publicResult.label.length > 300)) fail('INVALID_LIFECYCLE', 'Invalid public result');
+    if (record.publicResult !== null && (!object(record.publicResult) || Object.keys(record.publicResult).some(key => !['code', 'label'].includes(key)) || !identifier(record.publicResult.code) || typeof record.publicResult.label !== 'string' || record.publicResult.label.length > 300)) fail('INVALID_LIFECYCLE', 'Invalid public result');
   }
   for (const run of data.runs) if (!identifier(run.id) || !identifier(run.task) || !['succeeded', 'failed'].includes(run.status) || !integer(run.startedAt) || !integer(run.finishedAt) || !object(run.evidence)) fail('INVALID_LIFECYCLE', 'Invalid maintenance evidence');
   if (previous) {
@@ -158,7 +158,7 @@ export function prepareLifecycleRestore(state, options = {}) {
   let unknownSubjects = 0, appliedWithdrawals = 0;
   for (const id of new Set(options.withdrawnSubjectIds ?? [])) {
     if (!own(data.subjects, id)) { unknownSubjects += 1; continue; }
-    if (data.subjects[id].withdrawnAt === null) { lifecycleCommand(state, { id }, { action: 'withdraw' }, { now }); appliedWithdrawals += 1; }
+    if (data.subjects[id].withdrawnAt === null) { lifecycleCommand(state, { id }, { action: 'withdraw' }, { now, provider: options.provider }); appliedWithdrawals += 1; }
   }
   const maintenance = lifecycleCommand(state, { id: 'system:restore', mfa: true, roles: ['operations_admin'] }, { action: 'retain' }, { now });
   audit(state, null, 'lifecycle.restore.reconcile', null, now, { appliedWithdrawals, unknownSubjects, expiredRecords: maintenance.evidence.purged });
@@ -181,7 +181,35 @@ function workflow(config, type) {
     (policy.requireConsent && (!identifier(policy.purpose) || !identifier(policy.consentVersion)))) fail('INVALID_WORKFLOW', 'Workflow configuration is invalid');
   for (const [from, targets] of Object.entries(policy.transitions)) if (!policy.states.includes(from) || !Array.isArray(targets) || !targets.every(to => policy.states.includes(to))) fail('INVALID_WORKFLOW', 'Workflow transitions reference an unknown state');
   if (!Array.isArray(policy.eligibilityFields ?? []) || !(policy.eligibilityFields ?? []).every(identifier)) fail('INVALID_WORKFLOW', 'Invalid eligibility configuration');
+  if (!Array.isArray(policy.terminalStates ?? []) || !(policy.terminalStates ?? []).every(state => policy.states.includes(state))) fail('INVALID_WORKFLOW', 'Workflow terminal states reference an unknown state');
+  if (!object(policy.publicResults ?? {})) fail('INVALID_WORKFLOW', 'Invalid public result configuration');
+  for (const [decision, result] of Object.entries(policy.publicResults ?? {})) {
+    if (!(policy.decisionCodes ?? []).includes(decision) || !object(result) || Object.keys(result).some(key => !['code', 'label'].includes(key)) ||
+      !identifier(result.code) || typeof result.label !== 'string' || result.label.length > 300) fail('INVALID_WORKFLOW', 'Public results must map configured decisions to explicit code and label fields');
+  }
   return policy;
+}
+
+function configuredPublicResult(policy, decision) {
+  const mapping = policy.publicResults ?? {};
+  return decision !== null && own(mapping, decision) ? { code: mapping[decision].code, label: mapping[decision].label } : null;
+}
+
+/** A snapshot is not authority to publish text: current workflow policy is. */
+function validateRecordWorkflow(record, config) {
+  const policy = workflow(config, record.type);
+  if (!policy.states.includes(record.status)) fail('INVALID_STATUS', 'Record status is not configured for its workflow');
+  // Cleanup intentionally erases decisions even when the retained status is terminal.
+  if (record.purgedAt !== null) {
+    if (record.decisionCode !== null || record.publicResult !== null) fail('INVALID_LIFECYCLE', 'Purged record retains a decision or public result');
+    return null;
+  }
+  if (record.decisionCode !== null && !(policy.decisionCodes ?? []).includes(record.decisionCode)) fail('INVALID_DECISION', 'Decision code is not configured');
+  if ((policy.terminalStates ?? []).includes(record.status) && !record.decisionCode) fail('DECISION_REQUIRED', 'A terminal state requires a decision code');
+  const expected = configuredPublicResult(policy, record.decisionCode);
+  if (expected === null ? record.publicResult !== null : !object(record.publicResult) || Object.keys(record.publicResult).length !== 2 ||
+    record.publicResult.code !== expected.code || record.publicResult.label !== expected.label) fail('INVALID_PUBLIC_RESULT', 'Public result must exactly match the configured decision mapping');
+  return expected;
 }
 
 function audit(state, principal, action, targetId, now, metadata = {}) {
@@ -205,19 +233,67 @@ function assertActive(data, id, policy, epoch, now) {
   return current;
 }
 
+function assertParticipantEligibility(principal, policy) {
+  if (principal?.assurance !== 'invitation') return;
+  if (!object(principal.eligibility) || (policy.eligibilityFields ?? []).some(field => principal.eligibility[field] !== true)) fail('INELIGIBLE', 'Current reviewed participant eligibility is required', 403);
+}
+
 function dto(record) {
   return { id: record.id, type: record.type, status: record.status, version: record.version, entityId: record.entityId, revisionId: record.revisionId, assignee: record.assignee, decisionCode: record.decisionCode, createdAt: record.createdAt, updatedAt: record.updatedAt, expiresAt: record.expiresAt, purgedAt: record.purgedAt };
 }
 
 export function lifecycleList(state) { return Object.values(dataOf(state).records).map(dto); }
 
+/** A capability or owner check must precede use of this deliberately small projection. */
+export function lifecycleRecordSummary(state, id, options = {}) {
+  const data = dataOf(state), record = data.records[id], now = timestamp(options);
+  if (!record || record.purgedAt !== null || record.expiresAt <= now || !record.subjectId) return null;
+  try {
+    const policy = workflow(options.config, record.type), result = validateRecordWorkflow(record, options.config);
+    assertActive(data, record.subjectId, policy, record.consentEpoch, now);
+    return { id: record.id, type: record.type, status: record.status, version: record.version, createdAt: record.createdAt, updatedAt: record.updatedAt, expiresAt: record.expiresAt, result };
+  } catch (error) {
+    if (!(error instanceof RuntimeError)) throw error;
+    return null;
+  }
+}
+
+/** Owner summaries never decrypt payloads, expose queue assignments, or require public links. */
+export function lifecycleSelfList(state, principal, options = {}) {
+  const policy = options.policy ?? defaultRolePermissions;
+  if (principal?.assurance === 'invitation') assertParticipantOperation(principal, { action: 'list' }, options.participants);
+  requirePermission(principal, 'lifecycle:self', policy, { assurance: 'invitation' });
+  const owner = ownSubject(principal);
+  return Object.values(dataOf(state).records).flatMap(record => {
+    if (record.subjectId !== owner) return [];
+    if (principal.assurance === 'invitation') {
+      try {
+        assertParticipantOperation(principal, { action: 'list', type: record.type }, options.participants);
+        assertParticipantEligibility(principal, workflow(options.config, record.type));
+      }
+      catch (error) { if (!(error instanceof RuntimeError)) throw error; return []; }
+    }
+    const summary = lifecycleRecordSummary(state, record.id, options);
+    return summary ? [summary] : [];
+  });
+}
+
 export function lifecyclePublicResults(state, options = {}) {
   const data = dataOf(state), content = state.modules.content, now = timestamp(options);
-  if (!content) return [];
+  if (!content || !options.config) return [];
   const publicTime = new Date(now).toISOString();
   const visible = new Set(projectPublic(content, { now: publicTime, communityId: state.communityId, revision: state.revision }).nodes.map(node => node.id));
-  return Object.values(data.records).filter(record => record.purgedAt === null && record.expiresAt > now && record.publicResult && visible.has(record.entityId) &&
-    (record.revisionId === null || readPublicRevision(content, record.revisionId, { now: publicTime }))).map(record => ({ entityId: record.entityId, revisionId: record.revisionId, result: { code: record.publicResult.code, label: record.publicResult.label }, updatedAt: record.updatedAt }));
+  return Object.values(data.records).flatMap(record => {
+    if (record.purgedAt !== null || record.expiresAt <= now || !record.publicResult || !visible.has(record.entityId) ||
+      (record.revisionId !== null && !readPublicRevision(content, record.revisionId, { now: publicTime }))) return [];
+    try {
+      const result = validateRecordWorkflow(record, options.config);
+      return result ? [{ entityId: record.entityId, revisionId: record.revisionId, result, updatedAt: record.updatedAt }] : [];
+    } catch (error) {
+      if (!(error instanceof RuntimeError)) throw error;
+      return [];
+    }
+  });
 }
 
 /** Invoke inside readAuthorized/store.transact so failure to persist the audit prevents disclosure. */
@@ -246,14 +322,14 @@ function eraseAssociations(state, subjectId, recordIds, { eraseSubject = false }
     // Results/fingerprints may contain target IDs; delete the entire associated entry.
     if ((subjectId && entry.subjectId === subjectId) || linked(entry)) delete state.idempotency[key];
   }
-  state.audit = state.audit.filter(entry => !(eraseSubject && [entry.subjectId, entry.actorId, entry.targetId].includes(subjectId)) && !linked(entry));
-}
-
-function revokeSessions(state, subjectId, now, sessionId = null) {
-  for (const session of state.modules.auth?.sessions ?? []) if (session.subjectId === subjectId && (sessionId === null || session.id === sessionId)) {
-    session.revokedAt = now;
-    session.tokenHash = createHash('sha256').update(`revoked:${randomUUID()}`).digest('hex');
+  const reports = state.modules.reports;
+  if (reports) {
+    for (const [tokenHash, receipt] of Object.entries(reports.receipts)) {
+      if (ids.has(receipt.recordId) || (subjectId && receipt.subjectId === subjectId)) delete reports.receipts[tokenHash];
+    }
+    for (const [keyHash, replay] of Object.entries(reports.replays)) if (!own(reports.receipts, replay.tokenHash)) delete reports.replays[keyHash];
   }
+  state.audit = state.audit.filter(entry => !(eraseSubject && [entry.subjectId, entry.actorId, entry.targetId].includes(subjectId)) && !linked(entry));
 }
 
 function ownSubject(principal, requested) {
@@ -267,6 +343,7 @@ export function lifecycleCommand(state, principal, input, options = {}) {
   const data = dataOf(state), now = timestamp(options);
   if (!integer(now) || !object(input)) fail('INVALID_REQUEST', 'Invalid lifecycle request');
   const { config, keyring } = options;
+  if (principal?.assurance === 'invitation') assertParticipantOperation(principal, input, options.participants);
   if (['transition', 'import'].includes(input.action)) requirePermission(principal, 'lifecycle:manage', options.policy ?? defaultRolePermissions);
   if (['retain', 'task'].includes(input.action)) requirePermission(principal, ['operations:manage', 'lifecycle:manage'], options.policy ?? defaultRolePermissions);
   switch (input.action) {
@@ -274,13 +351,14 @@ export function lifecycleCommand(state, principal, input, options = {}) {
       const id = ownSubject(principal, input.subjectId), policy = workflow(config, input.type);
       let current = subject(data, id);
       if (current && current.withdrawnAt !== null) fail('CONSENT_WITHDRAWN', 'Withdrawal is final for this subject; create a separately reviewed enrollment', 403);
-      if (!object(input.eligibility ?? {}) || !Object.values(input.eligibility ?? {}).every(value => typeof value === 'boolean')) fail('INVALID_ELIGIBILITY', 'Eligibility values must be booleans');
-      for (const field of policy.eligibilityFields ?? []) if (input.eligibility?.[field] !== true) fail('INELIGIBLE', 'Required eligibility must be explicitly confirmed', 403);
+      const eligibility = principal?.assurance === 'invitation' ? principal.eligibility : input.eligibility ?? {};
+      if (!object(eligibility) || !Object.values(eligibility).every(value => typeof value === 'boolean')) fail('INVALID_ELIGIBILITY', 'Eligibility values must be booleans');
+      for (const field of policy.eligibilityFields ?? []) if (eligibility[field] !== true) fail('INELIGIBLE', 'Required eligibility must be explicitly confirmed', 403);
       if (policy.requireConsent && (input.version !== policy.consentVersion || input.accepted !== true)) fail('CONSENT_REQUIRED', 'Explicit current-version consent is required', 403);
       current ??= { id, epoch: 0, consents: {}, eligibility: {}, withdrawnAt: null };
       current.epoch += 1;
       for (const record of Object.values(data.records)) if (record.subjectId === id && record.purgedAt === null) { record.consentEpoch = current.epoch; record.version += 1; record.updatedAt = now; }
-      current.eligibility = { ...current.eligibility, ...clone(input.eligibility ?? {}) };
+      current.eligibility = principal?.assurance === 'invitation' ? clone(eligibility) : { ...current.eligibility, ...clone(eligibility) };
       if (policy.requireConsent) current.consents[policy.purpose] = { version: input.version, grantedAt: now };
       data.subjects[id] = current;
       audit(state, principal, 'lifecycle.consent.grant', id, now, { purpose: policy.purpose ?? null, version: policy.consentVersion ?? null, epoch: current.epoch });
@@ -288,6 +366,7 @@ export function lifecycleCommand(state, principal, input, options = {}) {
     }
     case 'create': {
       const id = input.id ?? randomUUID(), owner = ownSubject(principal, input.subjectId), policy = workflow(config, input.type);
+      assertParticipantEligibility(principal, policy);
       if (!identifier(id) || own(data.records, id)) fail('RECORD_CONFLICT', 'Private record ID already exists or is invalid', 409);
       if (!policy.requireConsent && !subject(data, owner)) data.subjects[owner] = { id: owner, epoch: 0, consents: {}, eligibility: {}, withdrawnAt: null };
       const current = assertActive(data, owner, policy, input.consentEpoch ?? (policy.requireConsent ? undefined : 0), now);
@@ -295,6 +374,7 @@ export function lifecycleCommand(state, principal, input, options = {}) {
       const expiresAt = now + policy.retentionMs;
       if (!integer(expiresAt)) fail('INVALID_WORKFLOW', 'Retention expiry exceeds supported timestamps');
       const record = { id, type: input.type, status: policy.initialState, version: 0, subjectId: owner, consentEpoch: current.epoch, entityId: input.entityId ?? null, revisionId: input.revisionId ?? null, externalId: input.externalId ?? null, assignee: null, decisionCode: null, publicResult: null, createdAt: now, updatedAt: now, expiresAt, purgedAt: null, payload: encryptPrivatePayload(id, { data: input.payload, internalNotes: [] }, keyring) };
+      validateRecordWorkflow(record, config);
       data.records[id] = record;
       validateLifecycle(data);
       validateLifecycleReferences(state, options);
@@ -310,8 +390,8 @@ export function lifecycleCommand(state, principal, input, options = {}) {
       if (input.expectedVersion !== record.version) fail('VERSION_CONFLICT', 'Private record version changed', 409);
       if (!(policy.transitions[record.status] ?? []).includes(input.status)) fail('INVALID_TRANSITION', 'Workflow does not allow this state change', 409);
       const decision = input.decisionCode ?? null;
-      if (decision !== null && !(policy.decisionCodes ?? []).includes(decision)) fail('INVALID_DECISION', 'Decision code is not configured');
-      if ((policy.terminalStates ?? []).includes(input.status) && !decision) fail('DECISION_REQUIRED', 'A terminal state requires a decision code');
+      const publicResult = configuredPublicResult(policy, decision);
+      validateRecordWorkflow({ ...record, status: input.status, decisionCode: decision, publicResult }, config);
       if (input.assignee !== undefined && input.assignee !== null && !identifier(input.assignee)) fail('INVALID_ASSIGNEE', 'Invalid assignee');
       if (input.note !== undefined) {
         if (typeof input.note !== 'string' || input.note.length > 20000) fail('INVALID_NOTE', 'Internal note exceeds 20000 characters');
@@ -325,8 +405,7 @@ export function lifecycleCommand(state, principal, input, options = {}) {
       record.updatedAt = now;
       if (input.assignee !== undefined) record.assignee = input.assignee;
       record.decisionCode = decision;
-      const published = decision && policy.publicResults?.[decision];
-      record.publicResult = published ? { code: published.code, label: published.label } : null;
+      record.publicResult = publicResult;
       validateLifecycle(data);
       audit(state, principal, 'lifecycle.record.transition', record.id, now, { state: record.status, version: record.version });
       return dto(record);
@@ -341,7 +420,7 @@ export function lifecycleCommand(state, principal, input, options = {}) {
       current.withdrawnAt = now;
       current.consents = {};
       current.eligibility = {};
-      revokeSessions(state, id, now);
+      revokeIdentitySubject(state, id, { provider: options.provider, now });
       eraseAssociations(state, id, ids, { eraseSubject: true });
       audit(state, null, 'lifecycle.consent.withdraw', null, now, { purgedRecords: ids.length });
       return { withdrawn: true, nonReplayable: true };
@@ -349,7 +428,7 @@ export function lifecycleCommand(state, principal, input, options = {}) {
     case 'logout': {
       const id = ownSubject(principal, input.subjectId);
       if (!principal.sessionId) fail('INVALID_SESSION', 'Current device session is required');
-      revokeSessions(state, id, now, principal.sessionId);
+      revokeIdentitySession(state, principal, { provider: options.provider, sessionId: principal.sessionId, now, policy: options.policy });
       return { loggedOut: true, consentWithdrawn: false, nonReplayable: true };
     }
     case 'retain': {
@@ -380,12 +459,15 @@ export function lifecycleCommand(state, principal, input, options = {}) {
       if (!object(input.data)) fail('INVALID_IMPORT', 'A private lifecycle snapshot is required');
       const imported = clone(input.data);
       validateLifecycle(imported);
-      for (const record of Object.values(imported.records)) if (record.payload) decryptPrivatePayload(record.id, record.payload, keyring);
+      for (const record of Object.values(imported.records)) {
+        validateRecordWorkflow(record, config);
+        if (record.payload) decryptPrivatePayload(record.id, record.payload, keyring);
+      }
       if (Object.keys(data.records).length || Object.keys(data.subjects).length || data.runs.length) fail('IMPORT_CONFLICT', 'Private import requires an empty lifecycle module', 409);
       state.modules.lifecycle = imported;
       validateLifecycleReferences(state, options);
       // Import never carries active credentials; the outer runtime restore also invalidates sessions.
-      for (const session of state.modules.auth?.sessions ?? []) { session.revokedAt = now; session.tokenHash = createHash('sha256').update(`import:${randomUUID()}`).digest('hex'); }
+      invalidateIdentityCredentials(state, { provider: options.provider, now });
       state.idempotency = {};
       audit(state, principal, 'lifecycle.private.import', null, now, { records: Object.keys(imported.records).length });
       return { imported: Object.keys(imported.records).length, sessionsInvalidated: true, nonReplayable: true };

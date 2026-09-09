@@ -100,9 +100,10 @@ function validateSource(revision, profile) {
   if (!profile.evidence.allowedModes.includes(data.mode)) fail('EVIDENCE_MODE', 'Source mode is not enabled');
   if (data.mode === 'link-only') {
     // The complete source revision is allowlisted, including its extension container.
-    const fields = ['title', 'url', 'mode', 'publisher', 'issuedAt', 'accessedAt'];
+    const fields = ['title', 'url', 'mode', 'publisher', 'issuedAt', 'accessedAt', 'rights'];
     if (Object.keys(data).some(key => !fields.includes(key))) fail('EVIDENCE_MODE', 'link-only source cannot retain body, screenshots, hashes, or untyped payload fields');
     for (const key of ['publisher', 'issuedAt', 'accessedAt']) if (own(data, key)) text(data[key], key, 300);
+    if (own(data, 'rights') && (!object(data.rights) || Object.keys(data.rights).some(key => key !== 'expiresAt'))) fail('EVIDENCE_MODE', 'link-only rights only support expiresAt metadata');
     if (revision.extensions !== undefined && (!object(revision.extensions) || Object.keys(revision.extensions).some(key => !['externalId', 'externalRevision'].includes(key)) || Object.values(revision.extensions).some(value => !['string', 'number'].includes(typeof value)))) fail('EVIDENCE_MODE', 'link-only extensions only support externalId and externalRevision metadata');
     const allowed = ['id', 'entityId', 'number', 'parentRevisionId', 'createdAt', 'data', 'extensions'];
     if (Object.keys(revision).some(key => !allowed.includes(key))) fail('EVIDENCE_MODE', 'link-only revision contains untyped payload');
@@ -110,8 +111,8 @@ function validateSource(revision, profile) {
     text(data.text, 'source.text', 100000);
     if (!object(data.rights) || !profile.evidence.excerptRights.includes(data.rights.basis)) fail('RIGHTS_REQUIRED', 'Excerpt sources require a configured rights basis');
     text(data.rights.reference, 'rights.reference', 2048);
-    if (data.rights.expiresAt !== undefined) date(data.rights.expiresAt, 'rights.expiresAt');
   }
+  if (data.rights?.expiresAt !== undefined) date(data.rights.expiresAt, 'rights.expiresAt');
 }
 
 export function validateContent(data, previous) {
@@ -223,7 +224,8 @@ function nowValue(now) { const value = now ?? new Date().toISOString(); date(val
 
 function sourceAvailable(data, revision, now, indexes = maps(data)) {
   const entity = indexes.entities.get(revision.entityId);
-  return roleOf(indexes, entity) === 'source' && !entity.hidden && entity.disposition === 'active' && (revision.data.mode !== 'excerpt' || !revision.data.rights.expiresAt || Date.parse(revision.data.rights.expiresAt) > Date.parse(now));
+  const expiresAt = revision.data.rights?.expiresAt;
+  return roleOf(indexes, entity) === 'source' && !entity.hidden && entity.disposition === 'active' && (expiresAt === undefined || Date.parse(expiresAt) > Date.parse(now));
 }
 function assertPublishable(data, revision, { now = new Date().toISOString() } = {}) {
   const indexes = maps(data), entity = indexes.entities.get(revision?.entityId);

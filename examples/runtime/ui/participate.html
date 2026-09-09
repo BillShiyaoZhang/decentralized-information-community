@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>参与与隐私报告</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/extensions/participate.css"><script src="/extensions/participate.js" defer></script></head>
+<body><main><h1>参与与隐私报告</h1>
+<p>这是合成数据接入示例。正式使用前，由社区维护资格审核标准、同意文本与参与期限。凭据仅保留在当前页面内存；重新加载页面后需要新的设备邀请。</p>
+<section><h2>兑换邀请</h2><form id="redeem"><label>已审核的一次性邀请 <input name="invitation" type="password" required autocomplete="off"></label><button>兑换</button></form></section>
+<section><h2>提交本人线索</h2><form id="consent"><label><input name="accepted" type="checkbox" required>我同意参与本示例流程，线索保留七天，可随时撤回并清除关联记录。</label><button>确认示例同意</button></form>
+<form id="intake"><label>线索 <textarea name="message" required maxlength="2000"></textarea></label><button>提交线索</button></form>
+<button id="activity" type="button">查看本人状态</button><button id="logout" type="button">退出本设备</button><button id="withdraw" type="button">撤回同意并退出所有设备</button><pre id="records"></pre></section>
+<section><h2>匿名隐私问题报告</h2><p>无需兑换邀请或加入研究。仅用于报告隐私问题；请保存提交后显示的状态回执。</p><form id="report"><label>隐私问题 <textarea name="message" required maxlength="2000"></textarea></label><button>提交隐私报告</button></form>
+<form id="receipt"><label>状态回执 <input name="receipt" type="password" required autocomplete="off"></label><button>查询处理状态</button></form><pre id="report-result"></pre></section>
+<p id="status" role="status" aria-live="polite"></p><a href="/extensions/index.html">返回社区说明</a></main></body></html>

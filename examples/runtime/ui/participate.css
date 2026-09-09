@@ -1,0 +1,4 @@
+#consent label { display: flex; align-items: start; gap: .65rem; }
+#consent input { width: auto; flex: none; margin-top: .4rem; }
+section form { margin-bottom: 1rem; }
+section > button { margin: 0 .4rem .4rem 0; }

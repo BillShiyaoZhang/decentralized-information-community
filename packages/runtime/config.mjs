@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve, relative, isAbsolute, sep } from 'node:path';
 import { RuntimeError } from './errors.mjs';
+import { validateParticipantConfig } from './participants.mjs';
+import { validateAnonymousReportConfig } from './reports.mjs';
 
 export function inside(root, path, name) {
   if (typeof path !== 'string' || !path.trim() || isAbsolute(path)) throw new RuntimeError('INVALID_CONFIG', `${name} must be a relative path`);
@@ -20,6 +22,12 @@ export async function loadRuntimeConfig({ root = process.cwd(), configFile = 'ru
   if (business.lifecycleFile) business.lifecycle = JSON.parse(await readFile(inside(dirname(businessPath), business.lifecycleFile, 'lifecycleFile'), 'utf8'));
   if (business.schemaVersion !== 1 || !business.content || !business.roles || Array.isArray(business.roles)) throw new RuntimeError('INVALID_CONFIG', 'Expected business config v1 with content and roles');
   for (const [role, permissions] of Object.entries(business.roles)) if (!/^[a-zA-Z0-9_:-]+$/.test(role) || !Array.isArray(permissions) || permissions.some(value => typeof value !== 'string')) throw new RuntimeError('INVALID_CONFIG', 'Roles map to arrays of permission names');
+  if (business.participants !== undefined) {
+    const participantPolicy = validateParticipantConfig(business.participants);
+    if (!business.lifecycle || !business.roles[participantPolicy.role]?.includes('lifecycle:self') || participantPolicy.selfService.types.some(type => !Object.hasOwn(business.lifecycle.workflows ?? {}, type))) throw new RuntimeError('INVALID_CONFIG', 'Participant self-service requires configured lifecycle workflows and a lifecycle:self role');
+  }
+  if (business.anonymousReports !== undefined) validateAnonymousReportConfig(business.anonymousReports, business.lifecycle);
+  if (config.identityProvider !== undefined) inside(base, config.identityProvider, 'identityProvider');
   if (config.extensions !== undefined && (!Array.isArray(config.extensions) || config.extensions.some(value => typeof value !== 'string'))) throw new RuntimeError('INVALID_CONFIG', 'extensions must list trusted local module entry paths');
   if (config.maintenanceIntervalMs !== undefined && (!Number.isSafeInteger(config.maintenanceIntervalMs) || config.maintenanceIntervalMs < 1000)) throw new RuntimeError('INVALID_CONFIG', 'maintenanceIntervalMs must be at least 1000');
   return { root: base, config, business, dataDirectory: inside(base, config.dataDirectory ?? '.runtime', 'dataDirectory'), contentFile: config.contentFile ? inside(base, config.contentFile, 'contentFile') : null };

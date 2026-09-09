@@ -110,6 +110,104 @@ test('link-only content rejects hidden bodies, screenshots, hashes, untyped exte
   assert.throws(() => importContent(contentModule.initialState({ profile: fixture.profile }), bundle), code('REFERENCE_POSITION'));
 });
 
+test('link-only expiry metadata round-trips and stays pinned to the cited source revision', () => {
+  const bundle = structuredClone(fixture.bundle), expiresAt = '2026-09-10T12:00:00.123Z';
+  bundle.revisions[1].data.rights = { expiresAt };
+  const initial = importContent(contentModule.initialState({ profile: fixture.profile }), bundle);
+  const old = readRevision(initial, 'artifact-revision-32');
+  const next = importContent(initial, { schemaVersion: 1, revisions: [{ ...old, id: 'artifact-revision-32-next', number: 2, parentRevisionId: old.id, data: { ...old.data, rights: { expiresAt: '2099-01-01T00:00:00Z' } } }] });
+  const exported = exportContent(next);
+  const roundtrip = importContent(contentModule.initialState({ profile: fixture.profile }), JSON.parse(JSON.stringify(exported)));
+  assert.deepEqual(exportContent(roundtrip), exported);
+  assert.deepEqual(importContent(roundtrip, exported), roundtrip);
+  assert.deepEqual(readRevision(roundtrip, old.id).data.rights, { expiresAt });
+  assert.equal(roundtrip.citations[1].sourceRevisionId, old.id);
+  const published = publish(roundtrip);
+  assert.equal(projectPublic(published, { now: '2026-09-10T12:00:00.122Z' }).nodes.length, 1);
+  assert.equal(projectPublic(published, { now: expiresAt }).nodes.length, 0);
+});
+
+test('link-only rights remain a strict metadata allowlist and invalid imports fully roll back', () => {
+  const module = { ...contentModule, initialState: () => contentModule.initialState({ profile: fixture.profile }) };
+  const store = new RuntimeStore(':memory:', { communityId: 'expiry-validation', modules: [module] });
+  const expiresAt = '2026-09-10T12:00:00Z';
+  const invalidRights = [
+    null, [], 'permission', 42,
+    { expiresAt, body: 'Hidden text' }, { expiresAt, screenshot: 'data:image/png' }, { expiresAt, contentHash: 'sha256-value' },
+    { expiresAt, payload: { body: 'Hidden text' } }, { expiresAt, basis: 'permission' }, { expiresAt, reference: 'record' },
+  ];
+  try {
+    const before = store.read();
+    for (const rights of invalidRights) {
+      const bundle = structuredClone(fixture.bundle); bundle.revisions[1].data.rights = rights;
+      assert.throws(() => store.transact(state => {
+        state.audit.push({ action: 'invalid-import' }); state.idempotency['failed-import'] = { result: true };
+        state.modules.content = importContent(state.modules.content, bundle);
+      }), code('EVIDENCE_MODE'), JSON.stringify(rights));
+      assert.deepEqual(store.read(), before);
+    }
+    for (const expiresAt of [null, '', 0, {}, [], 'not-a-date', '2026-09-10', '2026-09-10T12:00:00+00:00', '2026-09-10T12:00:00.1234Z', '2026-02-29T12:00:00Z', '2026-04-31T12:00:00Z', '2026-09-10T24:00:00Z']) {
+      for (const sourceIndex of [0, 1]) {
+        const bundle = structuredClone(fixture.bundle);
+        bundle.revisions[sourceIndex].data.rights = { ...bundle.revisions[sourceIndex].data.rights, expiresAt };
+        assert.throws(() => store.transact(state => {
+          state.audit.push({ action: 'invalid-import' }); state.idempotency['failed-import'] = { result: true };
+          state.modules.content = importContent(state.modules.content, bundle);
+        }), code('INVALID_CONTENT'), `${sourceIndex}: ${JSON.stringify(expiresAt)}`);
+        assert.deepEqual(store.read(), before);
+      }
+    }
+  } finally { store.close(); }
+});
+
+for (const mode of ['link-only', 'excerpt']) test(`${mode} expiry suppresses all public projections at the exact deadline and rejects publication`, () => {
+  const bundle = structuredClone(fixture.bundle), expiresAt = '2026-09-10T12:00:00.000Z';
+  const source = bundle.revisions.find(revision => revision.data.mode === mode);
+  source.data.rights = { ...source.data.rights, expiresAt };
+  bundle.entities.push({ id: 'independent-answer', type: 'answer' });
+  bundle.revisions.push({ id: 'independent-v1', entityId: 'independent-answer', number: 1, parentRevisionId: null, createdAt: now,
+    data: { title: 'Independent', sentences: [{ id: 'opinion', kind: 'advice', text: 'Consider your own plans.' }], impact: 'routine', origin: 'human' } });
+  bundle.links.push({ id: 'answer-relationship', from: 'guide-answer', to: 'independent-answer', reason: 'Related guidance' });
+  const imported = importContent(contentModule.initialState({ profile: fixture.profile }), bundle);
+  const history = publish(secondRevision(publish(imported)), 'answer-revision-18');
+  const data = publishContent(history, { entityId: 'independent-answer', revisionId: 'independent-v1', expectedVersion: 0, now });
+  const unchanged = structuredClone(data);
+  for (const [time, available] of [['2026-09-10T11:59:59.999Z', true], [expiresAt, false], ['2026-09-10T12:00:00.001Z', false]]) {
+    const graph = projectPublic(data, { now: time }), count = available ? 2 : 1;
+    validateGraph(graph);
+    assert.equal(graph.nodes.length, count); assert.equal(graph.edges.length, available ? 1 : 0);
+    assert.equal(projectPublic(data, { now: time, query: '课程信息' }).nodes.length, available ? 1 : 0);
+    assert.equal(searchGraph(graph, { query: '课程' }).length, available ? 1 : 0);
+    const stats = graphStats(graph); assert.equal(stats.nodes, count); assert.equal(stats.edges, available ? 1 : 0);
+    assert.equal(stats.isolated, available ? 0 : 1);
+    assert.equal(neighborhood(graph, 'independent-answer').nodes.length, count);
+    if (!available) assert.throws(() => neighborhood(graph, 'guide-answer'));
+    for (const revisionId of ['answer-revision-17', 'answer-revision-18']) assert.equal(readPublicRevision(data, revisionId, { now: time })?.revisionId ?? null, available ? revisionId : null);
+    const exported = publicContentExport(data, { now: time });
+    assert.equal(exported.revisions.length, available ? 3 : 1); assert.equal(exported.entities.length, count); assert.equal(exported.links.length, available ? 1 : 0);
+    if (!available) {
+      assert.ok(!JSON.stringify(graph).includes(source.id)); assert.ok(!JSON.stringify(exported).includes(source.id));
+      assert.throws(() => publishContent(data, { entityId: 'guide-answer', revisionId: 'answer-revision-18', expectedVersion: 2, now: time }), code('SOURCE_UNAVAILABLE'));
+    }
+  }
+  assert.deepEqual(data, unchanged);
+  assert.equal(readRevision(data, source.id).data.rights.expiresAt, expiresAt);
+});
+
+test('source revisions without expiry retain their existing availability', () => {
+  for (const linkRights of [undefined, {}]) {
+    const bundle = structuredClone(fixture.bundle);
+    for (const revision of bundle.revisions) if (revision.data.mode === 'excerpt') delete revision.data.rights.expiresAt;
+    if (linkRights !== undefined) bundle.revisions[1].data.rights = linkRights;
+    const data = publish(importContent(contentModule.initialState({ profile: fixture.profile }), bundle));
+    const options = { now: '2100-01-01T00:00:00Z' };
+    assert.equal(projectPublic(data, options).nodes.length, 1);
+    assert.equal(readPublicRevision(data, 'answer-revision-17', options).revisionId, 'answer-revision-17');
+    assert.equal(publicContentExport(data, options).revisions.length, 1);
+    assert.doesNotThrow(() => publishContent(data, { entityId: 'guide-answer', revisionId: 'answer-revision-17', expectedVersion: 1, ...options }));
+  }
+});
+
 test('excerpt retention requires rights and expired rights suppress all public reads', () => {
   for (const rights of [undefined, {}, { basis: 'invented', reference: 'x' }]) {
     const bundle = structuredClone(fixture.bundle); if (rights === undefined) delete bundle.revisions[0].data.rights; else bundle.revisions[0].data.rights = rights;

@@ -2,6 +2,19 @@
   "schemaVersion": 1,
   "contentProfileFile": "content-profile.json",
   "lifecycleFile": "lifecycle.json",
+  "participants": {
+    "role": "participant",
+    "invitationTtlMs": 86400000,
+    "sessionTtlMs": 28800000,
+    "idleTtlMs": 1800000,
+    "selfService": { "actions": ["consent", "create", "withdraw", "logout", "list"], "types": ["private_intake"] }
+  },
+  "anonymousReports": {
+    "type": "report",
+    "fields": { "message": { "maxLength": 2000, "required": true } },
+    "rateLimit": { "max": 20, "windowMs": 60000 },
+    "receiptTtlMs": 604800000
+  },
   "roles": {
     "content_editor": ["content:read", "content:edit"],
     "content_reviewer": ["content:read", "content:publish", "content:visibility"],

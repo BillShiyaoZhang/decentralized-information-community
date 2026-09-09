@@ -46,7 +46,7 @@ function source(t) {
 test('private restore preserves publication pointers, immutable history, encrypted context and external IDs while invalidating all sessions and replay records', t => {
   const { store, session } = source(t), backup = store.backup(), target = empty(t);
   const before = backup.state.modules.lifecycle.records['report-1'].payload;
-  target.restore(backup, { now, withdrawnSubjectIds: [] });
+  target.restore(backup, { now, revokedSubjectIds: [], withdrawnSubjectIds: [] });
   const restored = target.read(), content = restored.modules.content;
   assert.equal(content.entities.find(item => item.id === 'guide-answer').publicRevisionId, 'answer-revision-18');
   assert.deepEqual(readPublicRevision(content, 'answer-revision-17', { now: time }), readPublicRevision(backup.state.modules.content, 'answer-revision-17', { now: time }));
@@ -58,25 +58,26 @@ test('private restore preserves publication pointers, immutable history, encrypt
   assert.deepEqual(restored.modules.auth.sessions, []);
   assert.deepEqual(restored.idempotency, {});
   assert.throws(() => target.transact(state => authenticate(state, session.token, { now })), code('UNAUTHENTICATED'));
-  assert.equal(lifecyclePublicResults(restored, { now }).length, 1);
+  assert.deepEqual(lifecyclePublicResults(restored, { config, now }), [{ entityId: 'guide-answer', revisionId: 'answer-revision-17', result: config.workflows.report.publicResults.corrected, updatedAt: now }]);
+  assert.deepEqual(lifecyclePublicResults(restored, { now }), []);
   assert.equal(JSON.stringify(projectPublic(content, { now: time })).includes('confidential recovered payload'), false);
 });
 
 test('an old backup requires explicit current withdrawal reconciliation and cannot reactivate withdrawn subjects', t => {
   const { store } = source(t), old = store.backup(), target = empty(t), initial = target.read();
   command(store, { action: 'withdraw' });
-  assert.throws(() => target.restore(old, { now }), code('LIFECYCLE_RECONCILIATION_REQUIRED'));
+  assert.throws(() => target.restore(old, { now, revokedSubjectIds: [] }), code('LIFECYCLE_RECONCILIATION_REQUIRED'));
   assert.deepEqual(target.read(), initial);
-  assert.throws(() => target.restore(old, { now, withdrawnSubjectIds: ['invalid subject id'] }), code('INVALID_WITHDRAWAL_REGISTER'));
+  assert.throws(() => target.restore(old, { now, revokedSubjectIds: [], withdrawnSubjectIds: ['invalid subject id'] }), code('INVALID_WITHDRAWAL_REGISTER'));
   assert.deepEqual(target.read(), initial);
-  target.restore(old, { now, withdrawnSubjectIds: [principal.id, 'not-in-this-backup'] });
+  target.restore(old, { now, revokedSubjectIds: [], withdrawnSubjectIds: [principal.id, 'not-in-this-backup'] });
   const restored = target.read(), record = restored.modules.lifecycle.records['report-1'];
   assert.equal(record.payload, null);
   assert.equal(record.subjectId, null);
   assert.equal(record.entityId, null);
   assert.equal(record.publicResult, null);
   assert.equal(restored.modules.lifecycle.subjects[principal.id].withdrawnAt, now);
-  assert.deepEqual(lifecyclePublicResults(restored, { now }), []);
+  assert.deepEqual(lifecyclePublicResults(restored, { config, now }), []);
   assert.deepEqual(restored.idempotency, {});
   assert.equal(restored.audit.some(entry => entry.subjectId === principal.id || entry.actorId === principal.id), false);
   assert.throws(() => command(target, { action: 'create', id: 'resurrected', type: 'report', payload: {} }), code('CONSENT_WITHDRAWN'));
@@ -85,15 +86,27 @@ test('an old backup requires explicit current withdrawal reconciliation and cann
 
 test('restore purges expired ciphertext and linkage atomically before any read or public result can be served', t => {
   const { store } = source(t), backup = store.backup(), target = empty(t), expiry = now + config.workflows.report.retentionMs;
-  target.restore(backup, { now: expiry, withdrawnSubjectIds: [] });
+  target.restore(backup, { now: expiry, revokedSubjectIds: [], withdrawnSubjectIds: [] });
   const restored = target.read(), record = restored.modules.lifecycle.records['report-1'];
   assert.equal(record.payload, null);
   assert.equal(record.purgedAt, expiry);
   assert.equal(record.revisionId, null);
-  assert.deepEqual(lifecyclePublicResults(restored, { now: expiry }), []);
+  assert.deepEqual(lifecyclePublicResults(restored, { config, now: expiry }), []);
   const detail = target.transact(state => lifecycleDetail(state, manager, 'report-1', { keyring, now: expiry }));
   assert.equal(detail.payload, null);
   assert.equal(restored.modules.lifecycle.runs.at(-1).evidence.purged, 1);
+});
+
+test('offline backup text cannot become a public result without matching the current workflow policy', t => {
+  const { store } = source(t), backup = store.backup();
+  backup.state.modules.lifecycle.records['report-1'].publicResult.label = 'private text inserted into an offline snapshot';
+  const target = empty(t);
+  target.restore(backup, { now, revokedSubjectIds: [], withdrawnSubjectIds: [] });
+  assert.deepEqual(lifecyclePublicResults(target.read(), { now }), []);
+  assert.deepEqual(lifecyclePublicResults(target.read(), { config, now }), []);
+  const changedPolicy = structuredClone(config);
+  changedPolicy.workflows.report.publicResults = {};
+  assert.deepEqual(lifecyclePublicResults(store.read(), { config: changedPolicy, now }), []);
 });
 
 test('wrong backup envelope, broken citation and mismatched private reference leave the target completely empty', t => {
@@ -106,7 +119,7 @@ test('wrong backup envelope, broken citation and mismatched private reference le
   ]) {
     const target = empty(t), initial = target.read(), broken = structuredClone(backup);
     corrupt(broken);
-    assert.throws(() => target.restore(broken, { now, withdrawnSubjectIds: [] }));
+    assert.throws(() => target.restore(broken, { now, revokedSubjectIds: [], withdrawnSubjectIds: [] }));
     assert.deepEqual(target.read(), initial);
   }
 });
@@ -118,7 +131,7 @@ test('backup restore retains legacy guide AES-GCM AAD and key version without si
   const encrypted = Buffer.concat([cipher.update(JSON.stringify(value)), cipher.final(), cipher.getAuthTag()]);
   const envelope = importLegacyIntakeEnvelope(id, `v1.${iv.toString('base64url')}.${encrypted.toString('base64url')}`, 'old-key-version');
   store.transact(state => { const record = state.modules.lifecycle.records['report-1']; delete state.modules.lifecycle.records['report-1']; state.modules.lifecycle.records[id] = { ...record, id, externalId: 'legacy-record', payload: envelope }; });
-  const target = empty(t); target.restore(store.backup(), { now, withdrawnSubjectIds: [] });
+  const target = empty(t); target.restore(store.backup(), { now, revokedSubjectIds: [], withdrawnSubjectIds: [] });
   const restored = target.read().modules.lifecycle.records[id];
   assert.deepEqual(restored.payload, envelope);
   assert.equal(restored.externalId, 'legacy-record');

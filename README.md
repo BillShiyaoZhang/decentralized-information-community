@@ -65,7 +65,7 @@ const related = matches.length ? neighborhood(graph, matches[0].id, 2) : null;
 
 ## 可选：受治理的独立运行时
 
-需要不可变证据修订、具名 MFA、审核发布或私有工作流时，可消费 `@information-community/runtime@0.1.0`。运行 `npm run package:runtime` 获得固定版本产物；使用方只维护数据、业务配置、部署声明和可选页面。运行时使用 SQLite，包含会话撤销、统一公开读取策略、加密私有记录、同意撤回与保留清理。
+需要不可变证据修订、具名 MFA、审核发布或私有工作流时，可消费 `@information-community/runtime@0.3.0`。运行 `npm run package:runtime` 获得固定版本产物；使用方只维护数据、业务配置、部署声明和可选页面。运行时使用 SQLite，包含会话撤销、统一公开读取策略、加密私有记录、同意撤回与保留清理。
 
 参见[独立消费示例](examples/runtime/README.md)、[四项需求评估与接入边界](docs/runtime.md)及[运行时契约](packages/runtime/README.md)。该可选模式仅在线提供受治理内容；上面的纯图、Pages 和轻量服务器路线保持独立。
 

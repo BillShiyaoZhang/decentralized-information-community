@@ -83,14 +83,87 @@ test('configured decisions alone can create a public result; request fields cann
   run(store, { action: 'create', id: 'report-1', type: 'report', entityId: 'guide-answer', revisionId: 'answer-revision-17', payload: { report: 'private report' }, publicResult: { code: 'leak', label: 'private report' } });
   run(store, { action: 'transition', id: 'report-1', expectedVersion: 0, status: 'triage', note: 'sensitive handling note' }, manager);
   run(store, { action: 'transition', id: 'report-1', expectedVersion: 1, status: 'resolved', decisionCode: 'corrected', publicResult: { label: 'private report' } }, manager);
-  assert.deepEqual(lifecyclePublicResults(store.read(), { now }), [{ entityId: 'guide-answer', revisionId: 'answer-revision-17', result: config.workflows.report.publicResults.corrected, updatedAt: now }]);
-  assert.equal(JSON.stringify(lifecyclePublicResults(store.read(), { now })).includes('sensitive'), false);
+  assert.deepEqual(lifecyclePublicResults(store.read(), { config, now }), [{ entityId: 'guide-answer', revisionId: 'answer-revision-17', result: config.workflows.report.publicResults.corrected, updatedAt: now }]);
+  assert.deepEqual(lifecyclePublicResults(store.read(), { now }), []);
+  assert.equal(JSON.stringify(lifecyclePublicResults(store.read(), { config, now })).includes('sensitive'), false);
   const snapshot = store.read();
   snapshot.modules.content = hideContent(snapshot.modules.content, { entityId: 'guide-answer', expectedVersion: 1, hidden: true });
-  assert.deepEqual(lifecyclePublicResults(snapshot, { now }), []);
+  assert.deepEqual(lifecyclePublicResults(snapshot, { config, now }), []);
   const retracted = store.read();
   retracted.modules.content = setSourceDisposition(retracted.modules.content, { entityId: 'guide-source', disposition: 'withdrawn', expectedVersion: 0 });
-  assert.deepEqual(lifecyclePublicResults(retracted, { now }), []);
+  assert.deepEqual(lifecyclePublicResults(retracted, { config, now }), []);
+});
+
+test('private import rejects workflow and public-result forgeries without changing sessions, audit or replay state', t => {
+  const source = fixture(t, [publishedContentModule, lifecycleModule]);
+  run(source, { action: 'create', id: 'report-1', type: 'report', entityId: 'guide-answer', revisionId: 'answer-revision-17', payload: { report: 'private report' } });
+  const submitted = source.read().modules.lifecycle;
+  const transitionBefore = source.read();
+  assert.throws(() => run(source, { action: 'transition', id: 'report-1', expectedVersion: 0, status: 'triage', decisionCode: 'unconfigured' }, manager), errorCode('INVALID_DECISION'));
+  assert.deepEqual(source.read(), transitionBefore);
+  run(source, { action: 'transition', id: 'report-1', expectedVersion: 0, status: 'triage' }, manager);
+  run(source, { action: 'transition', id: 'report-1', expectedVersion: 1, status: 'resolved', decisionCode: 'corrected' }, manager);
+  const snapshot = source.read().modules.lifecycle;
+
+  const target = fixture(t, [authModule, publishedContentModule, lifecycleModule]);
+  const mfaKey = Buffer.alloc(32, 8), totpSecret = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+  bootstrapAccount(target, { id: manager.id, displayName: manager.displayName, roles: manager.roles, password: 'import-reviewer-password', totpSecret }, { mfaKey, now });
+  login(target, { accountId: manager.id, password: 'import-reviewer-password', code: totpCode(totpSecret, now) }, { mfaKey, now });
+  target.transact(state => { state.idempotency['existing-request'] = { subjectId: manager.id, action: 'existing.action', result: { preserved: true } }; });
+  const before = target.read();
+  for (const [modify, expected] of [
+    [record => { record.type = 'unknown'; }, 'INVALID_WORKFLOW'],
+    [record => { record.status = 'unknown'; }, 'INVALID_STATUS'],
+    [record => { record.decisionCode = 'unconfigured'; }, 'INVALID_DECISION'],
+    [record => { record.publicResult.code = 'forged'; }, 'INVALID_PUBLIC_RESULT'],
+    [record => { record.publicResult.label = 'leaked private interview text'; }, 'INVALID_PUBLIC_RESULT'],
+    [record => { record.status = 'submitted'; record.decisionCode = null; record.publicResult = { code: 'unconfigured', label: 'leaked private interview text' }; }, 'INVALID_PUBLIC_RESULT'],
+    [record => { record.decisionCode = null; record.publicResult = null; }, 'DECISION_REQUIRED'],
+    [record => { record.decisionCode = 'no_change'; }, 'INVALID_PUBLIC_RESULT'],
+    [record => { record.publicResult = null; }, 'INVALID_PUBLIC_RESULT'],
+    [record => { record.publicResult.privateNote = 'leaked private interview text'; }, 'INVALID_LIFECYCLE'],
+  ]) {
+    const forged = structuredClone(snapshot);
+    modify(forged.records['report-1']);
+    assert.throws(() => run(target, { action: 'import', data: forged }, manager), errorCode(expected));
+    assert.deepEqual(target.read(), before);
+    const externallyLoaded = source.read();
+    externallyLoaded.modules.lifecycle = forged;
+    assert.deepEqual(lifecyclePublicResults(externallyLoaded, { config, now }), []);
+  }
+  const noResults = structuredClone(config);
+  noResults.workflows.report.publicResults = {};
+  assert.throws(() => run(target, { action: 'import', data: snapshot }, manager, { config: noResults }), errorCode('INVALID_PUBLIC_RESULT'));
+  assert.throws(() => run(target, { action: 'import', data: snapshot }, manager, { config: undefined }), errorCode('INVALID_WORKFLOW'));
+  assert.deepEqual(target.read(), before);
+  assert.deepEqual(lifecyclePublicResults(source.read(), { config: noResults, now }), []);
+  assert.deepEqual(lifecyclePublicResults(source.read(), { now }), []);
+
+  assert.deepEqual(run(target, { action: 'import', data: snapshot }, manager), { imported: 1, sessionsInvalidated: true, nonReplayable: true });
+  const imported = target.read();
+  assert.deepEqual(imported.modules.lifecycle, snapshot);
+  assert.deepEqual(imported.idempotency, {});
+  assert.ok(imported.modules.auth.sessions.every(session => session.revokedAt === now));
+  assert.equal(imported.audit.at(-1).action, 'lifecycle.private.import');
+  assert.deepEqual(lifecyclePublicResults(imported, { config, now }), lifecyclePublicResults(source.read(), { config, now }));
+  assert.deepEqual(decryptPrivatePayload('report-1', imported.modules.lifecycle.records['report-1'].payload, keyring).data, { report: 'private report' });
+
+  const pendingTarget = fixture(t, [publishedContentModule, lifecycleModule]);
+  assert.equal(run(pendingTarget, { action: 'import', data: submitted }, manager).imported, 1);
+  assert.deepEqual(lifecyclePublicResults(pendingTarget.read(), { config, now }), []);
+});
+
+test('private import accepts terminal cleanup tombstones with erased decisions and no public result', t => {
+  const source = fixture(t, [publishedContentModule, lifecycleModule]);
+  run(source, { action: 'create', id: 'report-1', type: 'report', entityId: 'guide-answer', payload: {} });
+  run(source, { action: 'transition', id: 'report-1', expectedVersion: 0, status: 'rejected', decisionCode: 'no_change' }, manager);
+  run(source, { action: 'retain' }, ops, { now: now + config.workflows.report.retentionMs });
+  const snapshot = source.read().modules.lifecycle;
+  assert.equal(snapshot.records['report-1'].status, 'rejected');
+  assert.equal(snapshot.records['report-1'].decisionCode, null);
+  const target = fixture(t, [publishedContentModule, lifecycleModule]);
+  assert.equal(run(target, { action: 'import', data: snapshot }, manager).imported, 1);
+  assert.deepEqual(lifecyclePublicResults(target.read(), { config, now }), []);
 });
 
 test('private links must reference existing entities and matching immutable revisions', t => {

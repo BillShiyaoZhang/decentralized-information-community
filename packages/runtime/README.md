@@ -1,4 +1,4 @@
-# @information-community/runtime 0.1.0
+# @information-community/runtime 0.3.0
 
 可选的受治理社区运行时，运行在 Node 24.12+ 的 24.x，使用 SQLite。核心包 `@information-community/core@0.2.0` 仍可独立用于纯图和静态网站。
 
@@ -11,7 +11,7 @@
 ```sh
 npm install --offline --ignore-scripts --no-audit --no-fund \
   ./vendor/information-community-core-0.2.0.tgz \
-  ./vendor/information-community-runtime-0.1.0.tgz
+  ./vendor/information-community-runtime-0.3.0.tgz
 npx --no-install community-runtime build
 npx --no-install community-runtime start
 ```
@@ -48,7 +48,70 @@ npx --no-install community-runtime start
 
 `roles` 是角色名到权限数组的映射；角色名由使用方定义。支持 `content:read`、`content:edit`、`content:publish`、`content:visibility`、`lifecycle:self`、`lifecycle:manage`、`accounts:manage` 和 `operations:manage`。提交数据里的 author/reviewer 不授予权限。审计主体来自服务端验证的具名身份。
 
-也可向 `createRuntimeApp` 注入可信 `auth.provider.authenticate(state, token, {now})`。它必须在事务内同步返回具名、已验证 MFA 且检查过撤销状态的 principal；异步结果被拒绝。这是可信本地验证器接口，不是允许客户端传入 principal 的接口，也不是完整 OIDC 客户端。开箱即用的可运行身份路线是内置 provider。
+也可向 `createRuntimeApp` 注入可信 `auth.provider`，或在 runtime config 中设置 `identityProvider` 为消费目录内的 ES module 路径，default export 为提供方。`authenticate(state, token, {now,participantsConfig})` 必须在事务内同步验证凭据和撤销状态；客户端不能提交 principal。MFA 身份返回 `{id,roles,sessionId,mfa:true}`；邀请身份明确返回 `{id,roles,sessionId,mfa:false,assurance:'invitation',eligibility}`，其中资格已经服务端核验。若有 subjectId，必须等于 id。
+
+提供方还需同步实现 `revokeSession(state,principal,{sessionId,now,policy})`、`revokeSubject(state,subjectId,{now})` 和 `prepareRestore(state,options)`；私有 import 需要 `invalidateAll(state,{now})`。所有钩子只修改传入 state，不在事务外进行网络或其他不可回滚的写入。退出、撤回和恢复调用对应提供方，缺少钩子或返回 Promise 会拒绝操作；钩子抛错使整次事务回滚。SDK 恢复必须将同一个 provider 传给 `store.restore(backup,{provider,...review})`，CLI 自动衔接。提供方应独立核对当前撤销登记并使旧凭据全部失效；平台同时拒绝已撤回的主体。内置身份路线无需使用方实现这些钩子。
+
+## 具名账户维护与恢复
+
+0.3.0 提供可审计的**离线本地账户维护**。具备数据库所在主机写权限且经过业务授权的操作员，先设置 `RUNTIME_OPERATOR_ID` 为自己的稳定身份，再调用 `community-runtime accounts` 查看白名单账户摘要，或 `community-runtime account <private-change.json>` 执行变更。操作员 ID 是审计归属，由部署者核验；它不是密码、MFA 或主机权限的替代品。维护文件仅在受信主机保存并按凭据保管策略清理，不放入版本控制或公开 UI；命令行只传文件路径，不传秘密值。
+
+```powershell
+$env:RUNTIME_OPERATOR_ID = 'operations:alice'
+npx --no-install community-runtime accounts
+npx --no-install community-runtime account private-change.json
+```
+
+所有变更保持原 account/actor ID、显示名和内容/审计归属，要求显式 `accountId` 与刚读取的 `expectedVersion`。每次成功变更递增账户版本，并使该账户全部设备会话和主体级幂等结果失效；其他账户不受影响。重复提交旧版本或并发冲突返回 `ACCOUNT_VERSION_CONFLICT`，不会重复更新。命令结果仅含 `{id,displayName,roles,active,version,credentialsRequired,revokedAt}`，审计只记具名操作员、操作和目标标识，秘密不进入审计或重试缓存。无效私有 JSON 的诊断也不输出文件片段。
+
+| action | 维护文件额外字段 | 行为 |
+| --- | --- | --- |
+| `credentials` | `password?`, `totpSecret?`，至少一个 | 轮换密码、TOTP 或同时替换；保留角色与停用状态 |
+| `roles` | `roles: [...]` | 修改角色，并使旧会话立即失效 |
+| `status` | `active: false/true` | 普通停用或重新启用；不清除同意，不建立永久撤销记录 |
+| `revoke-sessions` | 无 | 退出目标账户全部设备；保持角色、状态和凭据 |
+
+例如私有维护文件：
+
+```json
+{"action":"credentials","accountId":"editor-one","expectedVersion":0,"password":"<new-random-password>","totpSecret":"<new-Base32-secret>"}
+```
+
+替换占位符后执行；密码至少 14 字符，TOTP secret 使用 `generateTotpSecret()` 生成并安全登记到账户所有者的验证器。丢失 MFA 时，由业务核验身份及授权，再由具名离线操作员重新登记 TOTP；无需旧密码或旧验证码，也不需要修改密码散列或 MFA 密文。这个版本选择管理员重新引导作为恢复机制，不签发恢复码，不开放匿名找回或 HTTP 凭据维护入口。仅更新密码时保留 TOTP 重放计数；同一实际 HMAC 密钥的不同 Base32 表达也不能重置已用验证码计数。
+
+SDK 对应 `inspectAccountsOffline(store,{operatorId})` 和 `maintainAccountOffline(store,input,{operatorId,mfaKey,now?})`；密码单独轮换无需 MFA 解密密钥，TOTP 变更需要配置密钥。调用方必须是有数据库访问权的可信离线代码，不能把这些函数直接包成接收客户端 operatorId 的路由。CLI 在配置外部 identityProvider 时拒绝本地账户维护；外部提供方由自己的管理服务维护，内置恢复锁定策略仍保护备份中的本地账户。
+
+永久撤销与普通停用严格分离：`revokeIdentitySubject` 与隐私撤回为主体保留永久撤销记录，即使只启用 auth 模块也不能通过重新启用、凭据重置或 bootstrap 复活。恢复旧备份时，所有内置账户的密码派生值和 MFA 密文清空，`credentialsRequired:true`；必须经过新的具名审核并同时提供新密码和新 TOTP 才能登录，单独启用 active 不会解锁。原 ID、历史归属和普通停用状态保留；已永久撤销账户不能重新引导。
+
+## 可选邀请参与者与受限匿名报告
+
+0.2.0 增加 `business.participants` 与 `business.anonymousReports`，默认关闭。标准 CLI 自动注册对应 schema 1 模块；SDK 手动使用 `participantsModule` / `reportsModule`，并传给 `createRuntimeApp` 的 `auth.participants` / `anonymousReports`。例如：
+
+```json
+{
+  "participants": {
+    "role": "participant", "invitationTtlMs": 86400000,
+    "sessionTtlMs": 28800000, "idleTtlMs": 1800000,
+    "selfService": { "actions": ["consent", "create", "withdraw", "logout", "list"], "types": ["private_intake"] }
+  },
+  "anonymousReports": {
+    "type": "report", "fields": { "message": { "maxLength": 2000, "required": true } },
+    "rateLimit": { "max": 20, "windowMs": 60000 }, "receiptTtlMs": 604800000
+  }
+}
+```
+
+邀请由具备 MFA 与 `accounts:manage` 的管理员签发，或通过离线 `community-runtime invite reviewed-eligibility.json`。输入仅 `{subjectId?,eligibility:{...已审核布尔字段}}`；省略主体 ID 时平台生成 `participant:` 前缀 ID。已有主体的新邀请用于另一设备，不能重新登记已撤回主体。CLI 返回一次性 token，交付给已审核参与者；不要把输出写入公共日志。客户端仅提交 token 兑换，会话不注册密码或 TOTP。邀请与会话由平台生成 32 字节随机值，只存哈希；兑换、期限与重放判断在同一事务内。邀请最长七天、会话最长一天、空闲期限最长一小时，配置可缩短。
+
+错误签发的单张邀请可通过 `community-runtime cancel-invitation invitation.json`（设置具名 RUNTIME_OPERATOR_ID）或管理员 HTTP 取消，输入 `{invitationId}`。SDK 使用事务内 `cancelParticipantInvitation(state,input,{now})`。取消不改变主体资格、其他邀请或已有设备；已兑换或已过期邀请不能作为待兑换邀请取消。重复取消返回同一取消状态。
+
+邀请身份只允许明确配置的 self 动作和工作流类型，权限映射仍须含 `lifecycle:self`。即使误给参与者角色配置管理权限，也不能调用编辑发布、队列、账户或运维入口。参与者 consent 的资格来自凭据中已审核的 eligibility，不能由请求的 eligibility 字段提升。撤回清理记录并永久撤销该主体的全部设备和未兑换邀请；单设备退出保留同意。读取完整请求体后再次在事务中认证，因此上传期间退出/撤回会阻断后续写入。
+
+`lifecycleSelfList(state,principal,{config,participants,policy,now})` 与本人列表 API 返回白名单状态摘要（含配置允许的 result），过滤所有权、到期、撤回与同意资格；未关联公开内容的待处理记录也能返回。摘要无需密钥或正文解密，不包含内部备注、指派或原始决定码。邀请身份不开放私有详情。
+
+匿名报告是独立的最小字符串 DTO 入口，只接受 `fields` 配置的字段和长度；目标工作流必须无需研究同意或资格。它不会创建可登录账户，也不开放通用私有命令。数据库中的全局窗口限流跨重启生效，不信任客户端 IP 转发头。成功返回 `{receipt,expiresAt}`，仅持高熵回执者可读该报告的摘要；回执通过 Authorization Bearer 传输，不放 URL。可省略 Idempotency-Key；需要安全重试时，客户端先用加密随机数生成 32 字节 base64url 键（43 字符），同一请求复用它。平台保存键哈希和加密回执以供同一 DTO 重试，冲突拒绝，成功重放不占用额外配额。不要使用常见短键，否则请求会被拒绝。回执、幂等响应均随 TTL 失效，恢复使旧回执失效。
+
+启用参与者后的恢复还要求当前 `revokedSubjectIds` 登记，格式例如 `{"withdrawnSubjectIds":[],"revokedSubjectIds":[]}`；显式空数组表示已经核对。恢复清除所有旧邀请和会话，即使它们在备份中未过期；撤销登记中备份未知的 ID 也会保留为永久撤销记录。重新访问需要审核后签发新邀请。旧备份应先按原模块配置恢复，再启用新增模块；数据库中已有模块时不可直接删掉相应配置或降级为旧包。
 
 ## HTTP / DTO / 错误契约 v1
 
@@ -60,6 +123,13 @@ npx --no-install community-runtime start
 | `GET /api/auth/me` | 有效 Bearer 会话 → principal |
 | `POST /api/auth/logout` | 撤销当前设备会话，保留同意和私有记录 |
 | `POST /api/auth/revoke` | `{sessionId}`；其他用户会话要求 `accounts:manage` |
+| `POST /api/participants/invitations` | MFA + `accounts:manage`；`{subjectId?,eligibility}` → 一次性邀请，不缓存 token |
+| `POST /api/participants/cancel-invitation` | MFA + `accounts:manage`；`{invitationId}` → 仅取消指定未兑换邀请，保留其他设备与邀请 |
+| `POST /api/participants/redeem` | `{token}` → 邀请参与者会话；不接受角色或 MFA 字段 |
+| `POST /api/participants/revoke` | MFA + `accounts:manage`；`{subjectId}` → 永久撤销主体凭据 |
+| `GET /api/private/self` | 配置开放的本人状态摘要，使用 Bearer 会话 |
+| `POST /api/reports` | 配置开放的匿名最小 DTO → `{receipt,expiresAt}` |
+| `GET /api/reports/status` | Bearer 回执 → 单份报告状态摘要，无正文和备注 |
 | `POST /api/content/import` | content interchange v1；需要 `content:edit` |
 | `POST /api/content/publish` | `{entityId,revisionId,expectedVersion}`；需要 `content:publish` |
 | `POST /api/content/hide` | `{entityId,expectedVersion,hidden}`；需要 `content:visibility` |
@@ -73,7 +143,7 @@ npx --no-install community-runtime start
 | `GET /api/export` | `kind: public-content-projection` 的白名单公开 DTO |
 | `POST /api/private/command` | 可配置私有生命周期命令，见下文 |
 | `GET /api/private/list` | 管理者可读摘要，无载荷、正文或内部备注 |
-| `GET /api/private/:id` | 所有者或管理者可读详情；解密及读取审计在事务内完成 |
+| `GET /api/private/:id` | MFA 所有者或管理者可读详情；解密及读取审计在事务内完成 |
 | `GET /api/public-results` | 配置允许的结果码/标签，只关联当前可公开实体及修订 |
 
 发布、导入及可重放的私有写操作要求 `Idempotency-Key`（8–200 字符）。键按“主体 + 操作 + 键”隔离，并绑定规范化输入摘要。相同输入返回已保存结果，不重复审核；不同输入返回 `IDEMPOTENCY_CONFLICT`。撤回、退出及私有迁移不保存可重放结果。权限、版本、证据规则、指针切换、审计和结果都在同一个 SQLite 事务内提交，失败全部回滚。
@@ -90,7 +160,15 @@ npx --no-install community-runtime start
 
 `entityTypes` 按 `role: content/source` 声明类型。领域 schema 支持 type、required、properties、additionalProperties、enum、items、长度/数量及数值界限，拒绝未知 schema 关键字，不宣称实现完整 JSON Schema。事实句种类、写入时是否要求引用、证据模式、摘录权利依据均可配置。
 
-link-only 来源严格限制字段，只保存标题、URL 和外部身份元信息；正文、截图、内容哈希及可夹带正文的任意扩展字段被拒绝。excerpt 要求有效的配置权利依据与引用记录；权利过期会阻断公开。平台执行声明的约束，不自动判断内容事实或替代权利审核。
+link-only 来源严格限制字段，只保存标题、URL、来源元信息和可选到期时间；正文、截图、内容哈希及可夹带正文的任意扩展字段被拒绝。excerpt 要求有效的配置权利依据与引用记录。两种来源都通过 `data.rights.expiresAt` 声明到期时间，并在 `now >= expiresAt` 时阻断发布与所有公开读取，包括历史、图计算及公开导出；无需额外定时隐藏任务。平台执行声明的约束，不自动判断内容事实或替代权利审核。
+
+从 0.1.1 起，link-only 的 `rights` 只允许可选 `expiresAt`，值为有效 UTC ISO 时间；不需要摘录模式的 basis/reference，也不允许夹带任何其他字段。例如来源修订的 data：
+
+```json
+{"title":"学校主页","url":"https://example.org/university","mode":"link-only","rights":{"expiresAt":"2099-01-01T00:00:00Z"}}
+```
+
+旧数据不带 rights/到期时间时保留原有语义。迁移指南的 `rights_expires_at` 时，应将非空 Unix 秒转换为 UTC ISO，保存到上述字段；无到期时间则省略。不要丢弃已有期限，也不要为表达期限把来源改成 excerpt。期限属于不可变来源修订，后续更改需建立新修订及相应引用。
 
 校园示例配置逐句引用，禁止 `impact: high` 和 `origin: ai_draft` 发布；人工点击也不能发布该 AI 修订，必须创建新的正式人工修订。复核逾期保留警示。范围在维度内 OR、维度间 AND，universal 总适用，主动筛选时 unknown 不匹配。检索支持配置别名。
 
@@ -106,7 +184,11 @@ link-only 来源严格限制字段，只保存标题、URL 和外部身份元信
 - `withdraw`：撤回当前主体，销毁载荷与关联，并使所有设备会话失效。
 - `logout`：只使当前设备退出，不撤回同意。
 - `retain`：重复安全的到期清理；`task`：调用可信维护提供方并记录成功/失败。
-- `import`：仅空私有模块接受完整版本化快照；验证密文并使会话/幂等记录失效。
+- `import`：仅空私有模块接受完整版本化快照；验证密文、引用及当前工作流语义，成功后使会话/幂等记录失效。
+
+工作流导入与正常写入复用相同的语义校验：type/status 必须存在于当前配置，decisionCode 必须属于允许决定码，终态需要决定码；publicResult 必须与该决定码对应的配置结果完全一致。没有决定码或没有配置结果时，只允许 publicResult 为 null。已清理记录的决定码与结果保持 null，不因保留终态而被误判为缺少决定。任何不兼容记录都会拒绝整个导入，保留原会话、数据、审计和幂等状态；旧记录需由使用方显式映射到当前工作流，不能在导入时默许任意结果文本。
+
+SDK 的 `lifecyclePublicResults(state, { config: business.lifecycle, now })` 需要显式传入当前工作流配置。缺配置、状态不兼容或结果不匹配时不返回该结果；有效结果的 code/label 从配置生成。HTTP 入口自动传入部署配置。可信离线完整 restore 仍按原有信任边界接受结构有效的历史状态，但恢复的记录同样不能绕过公开投影的配置检查。
 
 私有正文与内部备注整体 AES-256-GCM 加密。默认 AAD 为 `information-community:lifecycle:v1:<record ID>`。普通摘要不包含 payload；授权详情读取必须成功写入审计才返回明文。API 写入在事务中检查最新同意 epoch，撤回先提交则所有随后执行的在途写入都失败。已过期记录在清理任务运行前也不能读取详情。
 
@@ -134,7 +216,9 @@ export default {
 
 模块数据在 `state.modules[name]`，schema 版本在 `state.moduleVersions[name]`；按目标版本依次执行 migrations。缺少迁移、模块缺失、降级或验证失败都拒绝打开，整次升级回滚。模块和 provider 是受信部署代码，不从请求体加载，不适合执行不可信插件。
 
-runtime 0.1.x 支持运行时契约 1、内容/身份/生命周期 schema 1 和 core 0.2.0。0.x 次版本升级应先用副本验证；数据库迁移后不能直接用旧包降级，需恢复升级前备份或提供新的前向迁移。当前实现针对小型单库社区，事务同步执行，不提供多区域复制、跨库事务或 D1 在线适配器。
+runtime 0.3.0 使用运行时契约 1、auth schema 2、其他内置模块 schema 1 和 core 0.2.0。打开旧数据库或恢复旧备份时，auth schema 1 自动原子迁移到 2；正常升级保留活跃账户的凭据与会话，恢复备份则强制重新引导凭据。旧版没有可恢复停用契约，因此历史 `active:false` 保守迁移为永久撤销，防止复活旧版仅以停用标记执行的主体撤销。若存在业务自定义状态，请先核对迁移副本。0.x 次版本升级应先用副本验证；schema 升级后旧包会拒绝打开，不能直接降级。当前实现针对小型单库社区，事务同步执行，不提供多区域复制、跨库事务或 D1 在线适配器。
+
+0.1.0 → 0.1.1 不需要数据库 schema 迁移。新增 link-only 到期元数据需要 0.1.1 或更新版本读取；直接使用 `lifecyclePublicResults` 的应用必须补传 config，否则安全地返回空列表。私有 import 现在会拒绝过去曾被放行的不兼容快照，应先在迁移映射中修正，而不是放宽公开校验。
 
 角色和生命周期配置随启动加载。内容 profile 作为已存数据的解释规则被固定；修改配置后，启动会提示 `CONFIGURATION_CHANGED`。用 `community-runtime configure-content` 显式校验所有历史再原子应用，失败保留原配置状态。收窄发布规则立即影响公开投影，不能通过修改规则偷偷改写旧修订。
 
@@ -145,7 +229,7 @@ community-runtime backup /private/current-backup.json
 community-runtime restore /private/current-backup.json /private/withdrawal-review.json
 ```
 
-review 文件格式为 `{"withdrawnSubjectIds":["account-id"]}`。显式空数组代表管理员已核对没有额外撤回；未提供时拒绝恢复有主体的备份。该清单必须来自备份之外的当前删除登记：旧备份本身无法知道后来发生的撤回。恢复失败完整回滚；成功后用新会话重新登录。
+review 文件格式为 `{"withdrawnSubjectIds":["account-id"],"revokedSubjectIds":["permanently-revoked-id"]}`。有具名账户或邀请主体时必须提供当前 revokedSubjectIds；有私有同意主体时还需 withdrawnSubjectIds。显式空数组代表已经核对，缺少所需清单会拒绝恢复。清单必须来自备份之外的当前删除/撤销登记，未知 ID 也保留为永久撤销记录。恢复失败完整回滚；成功后内置具名账户须先经离线完整凭据重新引导，再登录，旧凭据不会静默恢复可用。
 
 ## 公开性与页面扩展
 
