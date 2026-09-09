@@ -1,0 +1,23 @@
+services:
+  dev:
+    image: node:24.12.0-alpine
+    working_dir: /app
+    user: node
+    command: node --watch --watch-preserve-output scripts/serve.mjs
+    environment:
+      HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:4173:4173"
+    volumes:
+      - .:/app
+  server:
+    build: .
+    profiles: [server]
+    environment:
+      WRITE_TOKEN: ${WRITE_TOKEN:-}
+    ports:
+      - "127.0.0.1:4174:4173"
+    volumes:
+      - community-data:/data
+volumes:
+  community-data:
