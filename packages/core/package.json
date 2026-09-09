@@ -1,0 +1,17 @@
+{
+  "name": "@information-community/core",
+  "version": "0.2.0",
+  "description": "Portable community knowledge graphs, typed relations and revision-checked proposals.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "engines": { "node": ">=22.13.0" },
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": { "types": "./index.d.ts", "import": "./index.js", "default": "./index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["index.js", "index.d.ts", "README.md", "LICENSE"],
+  "publishConfig": { "access": "public" }
+}

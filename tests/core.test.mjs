@@ -63,6 +63,32 @@ test('draft diff retains stable IDs and collapses repeated edits', () => {
   assert.equal(applyChange(seed, change).nodes.at(-1).title, '修改后的标题');
   draft.title = '偷偷修改社区名'; assert.throws(() => diffGraphs(seed, draft), /元数据/);
 });
+test('equivalent JSON key ordering does not manufacture changes', () => {
+  const reorder = value => Array.isArray(value) ? value.map(reorder) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).reverse().map(([k, v]) => [k, reorder(v)])) : value;
+  assert.equal(diffGraphs(seed, reorder(seed)).operations.length, 0);
+});
+test('non-JSON extensions and cycles fail validation before serialization', () => {
+  for (const extra of [() => 1, 1n, new Date(), NaN, Infinity, undefined]) {
+    const graph = structuredClone(seed); graph.nodes[0].extra = extra;
+    assert.throws(() => validateGraph(graph), GraphError);
+  }
+  const graph = structuredClone(seed); graph.nodes[0].extra = graph;
+  assert.throws(() => validateGraph(graph), /循环/);
+  const change = proposal(seed, 'non-json'); change.operations[0].value.extra = () => 1;
+  assert.throws(() => applyChange(seed, change), GraphError);
+  const withArray = structuredClone(seed); withArray.nodes[0].tags.extra = 'silently lost in JSON';
+  assert.throws(() => validateGraph(withArray), GraphError);
+  const withGetter = structuredClone(seed);
+  Object.defineProperty(withGetter.nodes[0].tags, '0', { enumerable: true, get() { throw new Error('must not execute'); } });
+  assert.throws(() => validateGraph(withGetter), GraphError);
+});
+
+test('optional graph description agrees with the public string type', () => {
+  for (const description of [{ unexpected: true }, 42, null, 'x'.repeat(20001)]) {
+    assert.throws(() => validateGraph({ ...seed, description }), GraphError);
+  }
+  assert.equal(validateGraph({ ...seed, description: '' }).description, '');
+});
 test('static adapter persists reloadable proposals, detects other tabs and protects reset', async t => {
   t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => structuredClone(seed) }));
   const storage = memory(), a = new StaticAdapter('http://local/data/graph.json', storage), b = new StaticAdapter('http://local/data/graph.json', storage);

@@ -18,7 +18,7 @@ const icons = {
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c6 5 6 13 0 18-6-5-6-13 0-18"/>'
 };
 const icon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] ?? icons.note}</svg>`;
-const state = { graph: null, selected: '', query: '', type: '', view: 'cards', adapter: null };
+const state = { graph: null, selected: '', query: '', type: '', view: 'cards', adapter: null, site: {} };
 const typeInfo = id => state.graph.ontology.nodeTypes.find(t => t.id === id);
 const typeIndex = id => state.graph.ontology.nodeTypes.findIndex(t => t.id === id) % 4;
 const nodeIcon = type => ['book', 'note', 'link', 'network'][typeIndex(type)] ?? 'note';
@@ -33,17 +33,17 @@ function shell() {
   const g = state.graph;
   $('#app').innerHTML = `<div class="workspace">
     <aside class="sidebar">
-      <a class="brand" href="#" aria-label="社区首页"><span class="brand-mark">${icon('network')}</span><span>共知<span class="brand-en">COMMON GROUND</span></span></a>
-      <div class="community-label">当前社区</div><div class="community-name">${esc(g.title)}<span>开放的知识，一起补全</span></div>
+      <a class="brand" href="#" aria-label="社区首页"><span class="brand-mark">${icon('network')}</span><span>${esc(state.site.brand)}<span class="brand-en">${esc(state.site.brandCaption)}</span></span></a>
+      <div class="community-label">当前社区</div><div class="community-name">${esc(g.title)}<span>${esc(state.site.tagline)}</span></div>
       <nav aria-label="内容类型"><button class="nav-item active" data-filter="">${icon('globe')}全部内容<span>${g.nodes.length}</span></button>${g.ontology.nodeTypes.map(t => `<button class="nav-item" data-filter="${esc(t.id)}">${icon(nodeIcon(t.id))}${esc(t.label)}<span>${g.nodes.filter(n => n.type === t.id).length}</span></button>`).join('')}</nav>
       <div class="side-section"><span class="eyebrow">社区结构</span><button class="nav-item" data-action="blueprint">${icon('network')}类型与关系蓝图</button></div>
-      <div class="sidebar-bottom"><div class="mode-label">${icon(state.adapter.kind === 'static' ? 'globe' : 'network')}<span>${state.adapter.kind === 'static' ? '静态社区' : '私有服务器'}<small>${state.adapter.kind === 'static' ? '公开快照 · 本机草稿' : 'SQLite 持久化 · 共享写入'}</small></span></div><button class="side-button" data-action="transfer">${icon('download')}数据与提案</button>${state.adapter.kind === 'server' ? '<button class="side-button" data-action="access">设置写入令牌</button>' : ''}<div class="version">COMMUNITY ENGINE <span>v0.1</span></div></div>
+      <div class="sidebar-bottom"><div class="mode-label">${icon(state.adapter.kind === 'static' ? 'globe' : 'network')}<span>${state.adapter.kind === 'static' ? '静态社区' : '私有服务器'}<small>${state.adapter.kind === 'static' ? '公开快照 · 本机草稿' : 'SQLite 持久化 · 共享写入'}</small></span></div><button class="side-button" data-action="transfer">${icon('download')}数据与提案</button>${state.adapter.kind === 'server' ? '<button class="side-button" data-action="access">设置写入令牌</button>' : ''}<div class="version">COMMUNITY ENGINE <span>v0.2</span></div></div>
     </aside>
     <main id="main"><header class="topbar"><div class="breadcrumb">社区知识网络<span>/</span><strong>${esc(g.title)}</strong></div><span class="avatar" aria-label="访客">访</span></header>
-      <section class="page-heading"><div><div class="eyebrow">KNOWLEDGE, CONNECTED</div><h1>让零散经验，彼此连接。</h1><p>${esc(g.description ?? '从一个话题开始，一起补充、连接和发现。')}</p></div><button class="primary" data-action="create">${icon('plus')}贡献内容</button></section>
+      <section class="page-heading"><div><div class="eyebrow">KNOWLEDGE, CONNECTED</div><h1>${esc(state.site.heading)}</h1><p>${esc(g.description ?? '从一个话题开始，一起补充、连接和发现。')}</p></div><button class="primary" data-action="create">${icon('plus')}贡献内容</button></section>
       <div class="notice" id="notice"></div>
       <section class="work-area" aria-label="知识工作区"><div class="collection"><div class="collection-toolbar"><label class="search">${icon('search')}<input id="search" type="search" placeholder="搜索话题、经验或关键词…" aria-label="搜索知识网络" autocomplete="off"><kbd>/</kbd></label><div class="view-switch" role="group" aria-label="显示方式"><button data-view="cards" class="active" aria-label="卡片视图" aria-pressed="true">${icon('grid')}</button><button data-view="graph" aria-label="关系图视图" aria-pressed="false">${icon('network')}</button></div></div><div id="results-meta"></div><div id="results"></div></div><aside id="detail" class="detail" aria-label="内容详情"></aside></section>
-      <footer class="page-footer"><span>每一份经验，都可以成为下一个人的起点。</span><span id="graph-stats"></span></footer>
+      <footer class="page-footer"><span>${esc(state.site.footer)}</span><span id="graph-stats"></span></footer>
     </main></div>`;
   $('#search').value = state.query;
   $('#search').addEventListener('input', e => { state.query = e.target.value; renderContent(); });
@@ -174,6 +174,7 @@ async function init() {
   try {
     const response = await fetch('./runtime-config.json', { cache: 'no-store' }); if (!response.ok) throw new Error('无法读取运行配置');
     const config = await response.json();
+    state.site = config.site ?? {};
     state.adapter = config.mode === 'server' ? new HttpAdapter(config.apiUrl) : new StaticAdapter(config.graphUrl);
     state.graph = await state.adapter.load();
     let requested = ''; try { requested = decodeURIComponent(location.hash.slice(1)); } catch { /* invalid bookmark */ }

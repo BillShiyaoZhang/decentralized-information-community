@@ -6,3 +6,6 @@ dist/
 *.sqlite-wal
 .env
 *.tgz
+artifacts/
+.openai/
+!**/.env.example

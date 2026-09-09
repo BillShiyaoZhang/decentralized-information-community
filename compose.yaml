@@ -6,17 +6,32 @@ services:
     command: node --watch --watch-preserve-output scripts/serve.mjs
     environment:
       HOST: 0.0.0.0
+      GRAPH_FILE: ${GRAPH_FILE:-}
+      COMMUNITY_CONFIG: ${COMMUNITY_CONFIG:-community.config.json}
     ports:
       - "127.0.0.1:4173:4173"
     volumes:
       - .:/app
   server:
-    build: .
+    build:
+      context: .
+      args:
+        GRAPH_FILE: ${GRAPH_FILE:-}
+        COMMUNITY_CONFIG: ${COMMUNITY_CONFIG:-community.config.json}
     profiles: [server]
     environment:
       WRITE_TOKEN: ${WRITE_TOKEN:-}
+      GRAPH_FILE: ${GRAPH_FILE:-}
+      COMMUNITY_CONFIG: ${COMMUNITY_CONFIG:-community.config.json}
     ports:
-      - "127.0.0.1:4174:4173"
+      - "${BIND_ADDRESS:-127.0.0.1}:${SERVER_PORT:-4174}:4173"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "-e", "const r = await fetch('http://127.0.0.1:4173/api/health'); if (!r.ok) process.exit(1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
     volumes:
       - community-data:/data
 volumes:

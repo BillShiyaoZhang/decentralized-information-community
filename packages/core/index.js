@@ -10,10 +10,40 @@ const text = (value, name, max = 20000) => {
 const identifier = (value, name) => {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/.test(value)) fail(`${name} 不是有效标识符`);
 };
+function assertJson(value, ancestors = new Set(), depth = 0) {
+  if (depth > 64) fail('JSON 数据嵌套过深');
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+  if (typeof value === 'number' && Number.isFinite(value)) return;
+  if (typeof value !== 'object' || (!Array.isArray(value) && ![Object.prototype, null].includes(Object.getPrototypeOf(value)))) fail('只接受 JSON 数据，扩展字段也不能包含函数、Date、BigInt 或非有限数字');
+  if (ancestors.has(value)) fail('JSON 数据不能包含循环引用');
+  if (Object.getOwnPropertySymbols(value).length) fail('JSON 数据不能包含 Symbol 字段');
+  ancestors.add(value);
+  if (Array.isArray(value)) {
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Object.keys(descriptors).length !== value.length + 1) fail('JSON 数组不能包含空洞或额外属性');
+    for (let index = 0; index < value.length; index++) {
+      const descriptor = descriptors[index];
+      if (!descriptor?.enumerable || !('value' in descriptor)) fail('JSON 数组项必须为普通可枚举数据');
+      assertJson(descriptor.value, ancestors, depth + 1);
+    }
+  }
+  else for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+    if (!descriptor.enumerable || !('value' in descriptor)) fail('JSON 字段必须为普通可枚举数据');
+    assertJson(descriptor.value, ancestors, depth + 1);
+  }
+  ancestors.delete(value);
+}
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])]));
+  return value;
+}
+const equalJson = (left, right) => JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 export function safeUrl(value) {
   try { const u = new URL(value); return ['https:', 'http:'].includes(u.protocol) && !u.username && !u.password; } catch { return false; }
 }
 export function validateOntology(ontology) {
+  assertJson(ontology);
   if (!object(ontology) || !Array.isArray(ontology.nodeTypes) || !Array.isArray(ontology.relationTypes)) fail('缺少类型蓝图');
   const types = new Set();
   for (const type of ontology.nodeTypes) {
@@ -35,8 +65,10 @@ export function validateOntology(ontology) {
   return ontology;
 }
 export function validateGraph(graph) {
+  assertJson(graph);
   if (!object(graph) || graph.schemaVersion !== 1) fail('只支持 schemaVersion: 1');
   identifier(graph.id, '社区 ID'); text(graph.title, '社区名称', 120);
+  if (graph.description !== undefined && (typeof graph.description !== 'string' || graph.description.length > 20000)) fail('社区描述必须是最多 20000 字符的文本');
   if (!Number.isSafeInteger(graph.revision) || graph.revision < 0) fail('revision 必须为非负整数');
   validateOntology(graph.ontology);
   if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) fail('缺少 nodes / edges');
@@ -72,6 +104,7 @@ export function validateGraph(graph) {
 }
 export function applyChange(graph, change) {
   validateGraph(graph);
+  assertJson(change);
   if (!object(change) || change.schemaVersion !== 1 || change.graphId !== graph.id) fail('提案不属于当前社区');
   identifier(change.id, '提案 ID');
   if (change.baseRevision !== graph.revision) throw new GraphError('数据版本已变化，请重新载入最新快照再合并提案', 'CONFLICT');
@@ -95,16 +128,16 @@ export function makeChange(graph, operations, id = `change-${crypto.randomUUID()
 export function diffGraphs(base, draft, id) {
   validateGraph(base); validateGraph(draft);
   const metadata = graph => Object.fromEntries(Object.entries(graph).filter(([k]) => !['nodes', 'edges', 'revision'].includes(k)));
-  if (JSON.stringify(metadata(base)) !== JSON.stringify(metadata(draft))) fail('提案只能修改节点和关联，不能切换社区或修改蓝图与元数据');
+  if (!equalJson(metadata(base), metadata(draft))) fail('提案只能修改节点和关联，不能切换社区或修改蓝图与元数据');
   const operations = [];
   for (const [key, op] of [['nodes', 'putNode'], ['edges', 'putEdge']]) {
     const previous = new Map(base[key].map(value => [value.id, value]));
     if (base[key].some(value => !draft[key].some(v => v.id === value.id))) fail('当前提案协议不支持删除');
-    for (const value of draft[key]) if (JSON.stringify(previous.get(value.id)) !== JSON.stringify(value)) operations.push({ op, value });
+    for (const value of draft[key]) if (!equalJson(previous.get(value.id), value)) operations.push({ op, value });
   }
   return makeChange(base, operations, id);
 }
-const normalize = value => value.normalize('NFKC').toLocaleLowerCase();
+const normalize = value => value.normalize('NFKC').toLowerCase();
 export function searchGraph(graph, { query = '', type = '', tag = '' } = {}) {
   const tokens = normalize(query.trim()).split(/\s+/).filter(Boolean);
   return graph.nodes.filter(node => (!type || node.type === type) && (!tag || node.tags.includes(tag)))

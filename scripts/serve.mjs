@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '../server/http.mjs';
 import { resolve } from 'node:path';
+import { loadCommunity } from './community-config.mjs';
 const port = Number(process.env.PORT ?? 4173), host = process.env.HOST ?? '127.0.0.1';
 let building = false, pending = false;
 async function build() {
@@ -19,11 +20,12 @@ async function build() {
 // Polling also works across Windows / Docker bind mounts where inotify may miss host edits.
 async function fingerprint() {
   const paths = [];
-  for (const folder of ['web', 'packages', 'examples']) {
+  for (const folder of ['web', 'packages', 'content', 'examples']) {
     const directory = resolve(import.meta.dirname, '..', folder);
     for (const name of await readdir(directory, { recursive: true })) paths.push(resolve(directory, name));
   }
-  if (process.env.GRAPH_FILE) paths.push(resolve(process.env.GRAPH_FILE));
+  const { configFile, graphFile } = await loadCommunity();
+  paths.push(configFile, graphFile);
   const entries = await Promise.all(paths.sort().map(async path => { const info = await stat(path); return `${path}:${info.mtimeMs}:${info.size}`; }));
   return entries.join('|');
 }

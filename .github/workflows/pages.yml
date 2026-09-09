@@ -1,29 +1,38 @@
 name: Publish GitHub Pages
 on:
+  push:
+    branches: ['**']
   workflow_dispatch:
 permissions:
   contents: read
   pages: write
   id-token: write
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   deploy:
+    # Follow the new repository's own default branch; never publish feature branches.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/configure-pages@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: '24.12.0'
+      - run: npm ci
       - run: npm test
       - run: npm run build
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: dist
       - uses: actions/deploy-pages@v4
         id: deployment
+      - name: Show website URL
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: echo "Website is ready at $PAGE_URL" >> "$GITHUB_STEP_SUMMARY"

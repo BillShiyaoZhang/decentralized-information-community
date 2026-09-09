@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { readFile, mkdtemp, rm, mkdir, cp } from 'node:fs/promises';
+import { readFile, mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { SqliteStore } from '../server/store.mjs';
@@ -50,8 +50,9 @@ test('server without configured write token stays read-only', async () => {
   finally { await new Promise(resolve => server.close(resolve)); store.close(); }
 });
 test('static artifact works beneath a GitHub Pages repository subpath', async () => {
-  await import('../scripts/build.mjs');
-  const dir = await mkdtemp(join(tmpdir(), 'community-pages-')); await mkdir(`${dir}/my-repository`); await cp(`${root}/dist`, `${dir}/my-repository`, { recursive: true });
+  const { buildSite } = await import('../scripts/build.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'community-pages-')); await mkdir(`${dir}/my-repository`);
+  await buildSite({ env: { GRAPH_FILE: `${root}/examples/campus/graph.json` }, output: `${dir}/my-repository` });
   const server = createApp({ root: dir }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}/my-repository/`;
   try {
